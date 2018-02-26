@@ -4,6 +4,7 @@ Scraper component for AHA (AttackSurface Host Analyzer)
 To run:
 Open a power shell
 cd to the directory containing the script and then run
+
 powershell.exe -File .\AttackSurfaceScraper.ps1
 
 
