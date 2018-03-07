@@ -1,3 +1,7 @@
+# TODOs / Future Features:
+# Bug/Enhancement req: Catalog signed files are not properly detected as signed since Get-PESecurity relies on Get-AuthenticodeSignature which does not work on Catalog-signed files
+# Bug/Enhancement req: Possibly scan binaries to see if GS Stack overrun protection was enabled at compile time
+
 
 $NetConnectionsFile = ".\NetConnections.csv"            #This script tested/requires powershell 2.0, tested on server 2008R2
 $BinaryAnalysisFile = ".\BinaryAnalysis.csv"
