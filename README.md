@@ -1,5 +1,5 @@
 # AHA-Scraper
-Scraper component for AHA (AttackSurface Host Analyzer)
+Scraper component for AHA (Attacksurface Host Analyzer)
 
 To run:
 Open a power shell
