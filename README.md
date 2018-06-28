@@ -8,11 +8,6 @@ cd to the directory containing the script and then run
 powershell.exe -File .\AHA-Scraper.ps1
 
 
-On later versions of windows (e.g. server 2016) if you encounter problems you can try forcing version 2 of powershell:
-
-powershell.exe -version 2 -File .\AHA-Scraper.ps1
-
-
 
 Note:
 To Allow unsigned powershell scripts:

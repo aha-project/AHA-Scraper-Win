@@ -11,6 +11,7 @@ try { Clear-Content $BinaryAnalysisFile -EA SilentlyContinue | Out-Null } catch 
 
 .\deps\cports-x64\cports.exe /cfg .\cports.cfg /scomma $NetConnectionsFile    #call cports and ask for a CSV. BTW if the .cfg file for cports is not present, this will break, because we need the CSV column headrs option set
 Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1         #import the Get-PESecurity powershell module
+Import-Module .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1         #import the Get-PESecurity powershell module
 
 write-host "Waiting for currPorts to output csv file..."
 while($true)
@@ -96,5 +97,8 @@ ForEach ( $exePath in $exepaths )
     }
     catch { write-host "Unexpected overall failure scanning ""$ePath""." }
 }
+
+$outputData = Test-ProcessPrivilege -ProcessObjects $outputData -EA SilentlyContinue
+
 #If adding additional columns to the output for the script via additions above, ensure that the new columns are included in the list below...or you'll waste a lot of time going around in circles #askmehow                                                                                                                                                                                  
-$outputData | Select-Object ProcessName, PID, ProcessPath, Protocol, LocalAddress, LocalPort, LocalPortName, RemoteAddress, RemotePort, RemoteHostName, RemotePortName, State, ProductName, FileDescription, FileVersion, Company, ProcessCreatedOn, UserName, ProcessServices, ProcessAttributes, DetectionTime, ARCH, ASLR, DEP, Authenticode, StrongNaming, SafeSEH, ControlFlowGuard, HighentropyVA | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8
+$outputData | Select-Object ProcessName, PID, ProcessPath, Protocol, LocalAddress, LocalPort, LocalPortName, RemoteAddress, RemotePort, RemoteHostName, RemotePortName, State, ProductName, FileDescription, FileVersion, Company, ProcessCreatedOn, UserName, ProcessServices, ProcessAttributes, DetectionTime, ARCH, ASLR, DEP, Authenticode, StrongNaming, SafeSEH, ControlFlowGuard, HighentropyVA, PrivilegeLevel, Privileges | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8
