@@ -1,8 +1,10 @@
 # AHA-Scraper
 Scraper component for AHA (Attacksurface Host Analyzer)
 
-To run:
-Open a power shell
+[Overall user project documentation](https://aha-project.github.io/)
+
+To run the scraper:
+Open a shell
 cd to the directory containing the script and then run
 
 powershell.exe -File .\AHA-Scraper.ps1
