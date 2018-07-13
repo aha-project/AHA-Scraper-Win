@@ -56,8 +56,7 @@ The levels are defined below.
 
     (4) Service - Running with privileges not granted by default that are
     associated with services.
-        SeAuditPrivilege 
-        SeCreateGlobalPrivilege
+        SeAuditPrivilege
         SeImpersonatePrivilege
         SeBackupPrivilege
     
@@ -78,6 +77,7 @@ The levels are defined below.
         SeIncreaseWorkingSetPrivilege
         SeTimeZonePrivilege
         SeChangeNotifyPrivilege
+        SeCreateGlobalPrivilege
         SeUndockPrivilege
 
 .PARAMETER ProcessObjects
@@ -264,8 +264,7 @@ function Get-PrivilegeLevel
                                 Privileges = @(
                                     # Privileges reserved for services
                                     "SeAuditPrivilege", 
-                                    "SeCreateGlobalPrivilege", 
-                                    "SeImpersonatePrivilege", 
+                                    "SeImpersonatePrivilege",
                                     "SeBackupPrivilege" 
                                 )
                             }
