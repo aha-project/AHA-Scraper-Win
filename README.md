@@ -1,7 +1,7 @@
 # AHA-Scraper
 Scraper component for AHA (Attacksurface Host Analyzer)
 
-[Click here for overall user project documentation](https://aha-project.github.io/)
+[Click here for user walkthrough / documentation](https://aha-project.github.io/)
 
 To run the scraper:
 Open a shell
