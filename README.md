@@ -1,8 +1,10 @@
 # AHA-Scraper
 Scraper component for AHA (Attacksurface Host Analyzer)
 
+## User Instructions
 [Click here for user walkthrough / documentation](https://aha-project.github.io/)
 
+## Scraper usage
 To run the scraper:
 Open a shell
 cd to the directory containing the script and then run
