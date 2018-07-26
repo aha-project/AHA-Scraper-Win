@@ -1,4 +1,4 @@
-# AHA-Scraper
+# AHA-Scraper-Windows
 This repository contains the windows host Scraper portion of the AHA (AttackSurface Host Analyzer) project which provides scan data which can then be visualized using the [AHA-GUI](https://github.com/aha-project/AHA-GUI).
 
 Developed by ESIC, Washington State University.
