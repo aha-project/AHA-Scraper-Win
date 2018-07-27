@@ -11,8 +11,8 @@ Clone or download the repo from github
 
 To run the scraper:
 1. Open a shell
-1. cd to the directory containing the script
-1. then run `powershell.exe -File .\AHA-Scraper.ps1`
+1. `cd` to the directory containing the script
+1. Then run `powershell.exe -File .\AHA-Scraper.ps1`
 
 The resulting `BinaryAnalysis.csv` can either be viewed in a text/spreadsheets app (such as Excel) or visualized in the [AHA-GUI](https://github.com/aha-project/AHA-GUI).
 
