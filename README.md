@@ -7,11 +7,12 @@ Developed by ESIC, Washington State University.
 [Click here for user walkthrough / documentation](https://aha-project.github.io/)
 
 # Scraper usage
-To run the scraper:
-Open a shell
-cd to the directory containing the script and then run
+Clone or download the repo from github
 
-powershell.exe -File .\AHA-Scraper.ps1
+To run the scraper:
+1. Open a shell
+1. cd to the directory containing the script and then run
+1. `powershell.exe -File .\AHA-Scraper.ps1`
 
 The resulting `BinaryAnalysis.csv` can either be viewed in a text/spreadsheets app (such as Excel) or visualized in the [AHA-GUI](https://github.com/aha-project/AHA-GUI).
 
