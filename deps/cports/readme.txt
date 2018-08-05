@@ -1,8 +1,8 @@
 
 
 
-CurrPorts v2.36
-Copyright (c) 2004 - 2017 Nir Sofer
+CurrPorts v2.51
+Copyright (c) 2004 - 2018 Nir Sofer
 Web site: http://www.nirsoft.net
 
 
@@ -28,6 +28,17 @@ information and icons)
 Versions History
 ================
 
+
+* Version 2.51:
+  o Added 'Creation Timestamp' column, which displays the date/time
+    that the connection was created. Be aware that this information is
+    not available for all connections and it works better on Windows 10.
+
+* Version 2.50:
+  o Added new columns: 'Sent Bytes', 'Received Bytes', 'Sent
+    Packets', 'Received Packets'. These columns are active only when
+    running CurrPorts as Administrator , 'Auto Refresh' mode is active
+    and the 'Collect Send/Receive Bytes Information' option is turned on.
 
 * Version 2.36:
   o Added 'Auto Size Columns+Headers' option.
