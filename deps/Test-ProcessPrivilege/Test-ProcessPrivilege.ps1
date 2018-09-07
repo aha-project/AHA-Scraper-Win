@@ -217,7 +217,7 @@ function Get-PrivilegeLevel
 {
     [OutputType([System.String])]     
     param(			
-		    [parameter(Mandatory=$true, Position=0, ParameterSetName = "Default")]
+		    [parameter(Position=0, ParameterSetName = "Default")]
 		    [System.Object]
 		    $PrivilegesList
     )
