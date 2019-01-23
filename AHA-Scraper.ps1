@@ -2,8 +2,8 @@
 # Bug/Enhancement req: Catalog signed files are not properly detected as signed since Get-PESecurity relies on Get-AuthenticodeSignature which does not work on Catalog-signed files
 # Bug/Enhancement req: Possibly scan binaries to see if GS Stack overrun protection was enabled at compile time
 
-$AHAScraperVersion = "v0.8.1"
-$NetConnectionsFile = ".\NetConnections.csv"            #This script tested/requires powershell 2.0, tested on server 2008R2
+$AHAScraperVersion = "v0.8.5"						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$NetConnectionsFile = ".\NetConnections.csv"           
 $BinaryAnalysisFile = ".\BinaryAnalysis.csv"
 
 try { Clear-Content $NetConnectionsFile -EA SilentlyContinue | Out-Null } catch {}  #delete the old output csv files from last run if they exist, or we will end up with weird results (because this script will start reading while cports is writing over the old file)
@@ -20,6 +20,7 @@ while($true)
     catch {}
     Start-Sleep 1 #sleep for 1s while we wait for file
 }
+Start-Sleep 1 #sleep for one more second to ensure the file is fully written/consistent on disk (which it should be, since cports has already exited, this is hopefully unnecessary, but seemed like a good idea.
 write-host "Importing $NetConnectionsFile..." 
 $NetConnectionObjects = $(import-csv -path $NetConnectionsFile -delimiter ',')
 $exePaths = $NetConnectionObjects | select "Process Path" -unique #get the unique names of all the exes on the machine #write-host "Waiting for currPorts to output csv file..."
@@ -27,37 +28,22 @@ $exePaths = $NetConnectionObjects | select "Process Path" -unique #get the uniqu
 [System.Collections.ArrayList]$workingData  = New-Object System.Collections.ArrayList($null) #create empty array list
 [System.Collections.ArrayList]$outputData  = New-Object System.Collections.ArrayList($null) 
 
-foreach ($csvLine in $NetConnectionObjects) 
+foreach ($csvLine in $NetConnectionObjects) #Finally found a sensible way to turn the import-csv data into a hashtable :)
 {
-    $ResultRecord = @{} #as of yet, I have not found a way to directly load a csv into a hashtable...
-    $ResultRecord.ProcessName = $csvLine.'Process Name'
-    $ResultRecord.PID = $csvLine.'Process ID'
-    $ResultRecord.ProcessPath = $csvLine.'Process Path'
-    $ResultRecord.Protocol = $csvLine.'Protocol'
-    $ResultRecord.LocalAddress = $csvLine.'Local Address'
-    $ResultRecord.LocalPort = $csvLine.'Local Port'
-    $ResultRecord.LocalPortName = $csvLine.'Local Port Name'
-    $ResultRecord.RemoteAddress = $csvLine.'Remote Address'
-    $ResultRecord.RemotePort = $csvLine.'Remote Port'
-    $ResultRecord.RemoteHostName = $csvLine.'Remote Host Name'
-    $ResultRecord.RemotePortName = $csvLine.'Remote Port Name'
-    $ResultRecord.State = $csvLine.'State'
-    $ResultRecord.ProductName = $csvLine.'Product Name' -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', '' #remove annoying unicode registered trademark symbols
-    $ResultRecord.FileDescription = $csvLine.'File Description' -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
-    $ResultRecord.FileVersion = $csvLine.'File Version' -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
-    $ResultRecord.Company = $csvLine.'Company' -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
-    $ResultRecord.ProcessCreatedOn = $csvLine.'Process Created On'
-    $ResultRecord.UserName = $csvLine.'User Name'
-    $ResultRecord.ProcessServices = $csvLine.'Process Services'
-    $ResultRecord.ProcessAttributes = $csvLine.'Process Attributes'
-    $ResultRecord.DetectionTime = $csvLine.'Added On'
-    $ResultRecord.ConnectionCreationTime = $csvLine.'Creation Timestamp'
-    $ResultRecord.ConnectionSentBytes = $csvLine.'Sent Bytes'
-    $ResultRecord.ConnectionSentPackets = $csvLine.'Sent Packets'
-    $ResultRecord.ConnectionReceivedBytes = $csvLine.'Received Bytes'
-    $ResultRecord.ConnectionReceivedPackets = $csvLine.'Received Packets'
-    $ResultRecord.ModuleFilename = $csvLine.'Module Filename'
-    $ResultRecord.AHAScraperVersion = $AHAScraperVersion
+    $ResultRecord = @{}
+	$csvLine | Get-Member -MemberType Properties | SELECT -exp "Name" | % 
+	{
+			$key=$_ -replace ' ',''
+			if ($key -eq 'ProcessID') { $key='PID' }
+			$value=$($csvLine | SELECT -exp $_)
+			$ResultRecord[$key]=$value
+			#write-host "inserting key ""$key"" val ""$value"""
+    }
+	$ResultRecord.ProductName=$ResultRecord.ProductName -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', '' #remove annoying unicode registered trademark symbols
+    $ResultRecord.FileDescription=$ResultRecord.FileDescription -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
+    $ResultRecord.FileVersion=$ResultRecord.FileVersion -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
+    $ResultRecord.Company=$ResultRecord.Company -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
+    $ResultRecord.AHAScraperVersion=$AHAScraperVersion
     $workingData.Add($ResultRecord) | Out-Null #store this working data to the internal representation datastore
 }
 
@@ -68,12 +54,15 @@ ForEach ( $exePath in $exepaths )
     try #the try is out here, because the expectation is that if we fail at any part in here, the failure is with Get-PESecurity
     {
         write-host "Scanning ""$ePath""..."
-        try { $result = Get-PESecurity -File $ePath -EA SilentlyContinue}
+        try { $result = Get-PESecurity -File $ePath -EA SilentlyContinue }
 		catch 
 		{ 	#so far this catch method has worked quite well for ensuring that scan failures result in reasonable output data. Willing to consider more concise methods however.
 			$result=$null
 		}
-		if (!$result) { $result = @{} }
+		
+		$mutableCopy= @{}
+		if ($result) { $result | Get-Member -MemberType Properties | ForEach-Object { $mutableCopy[ $_.Name ] = $result[ $_.Name ] } }
+		$result=$mutableCopy
 		if (!$result.ARCH) { $result.ARCH="ScanError" }
 		if (!$result.ASLR) { $result.ASLR="ScanError" }
 		if (!$result.DEP) { $result.DEP="ScanError" }
@@ -83,31 +72,64 @@ ForEach ( $exePath in $exepaths )
 		if (!$result.ControlFlowGuard) {$result.ControlFlowGuard="ScanError" }
 		if (!$result.HighentropyVA) { $result.HighentropyVA="ScanError" }
 		if (!$result.DotNET) { $result.DotNET="ScanError" }
+		if (!$result.FileHash) { $result.FileHash="ScanError" }
+		if (!$result.HashAlgorithm) { $result.HashAlgorithm="ScanError" }
+		try
+		{
+			$stream=$null
+			try { $stream = [System.IO.File]::OpenRead($ePath)}
+			catch { }
+			if ($stream)
+			{
+				$hashAlg=new-object -type System.Security.Cryptography.SHA512Managed
+				$bytes=$hashAlg.ComputeHash($stream)
+				$stream.Dispose()
+				$stream.Close()
+				$result.FileHash=[System.BitConverter]::ToString($bytes).Replace("-", [String]::Empty).ToLower();
+				$result.HashAlgorithm ="SHA512"
+				#write-host "Successful hash of file ""$ePath"" is ""$result.FileHash""." #todo this line no longer prints properly
+			}
+		}
+		catch
+		{ 
+			write-host "Failed to hash file at ""$ePath""."
+			if ($stream) { Write-Host line: $Error[0].InvocationInfo.ScriptLineNumber : $Error[0] }  #TODO: error printing is screwed up i think.  #if the stream never existed then we just assume we're trying to scan "system" or "unknown"
+		}
         foreach ($ResultRecord in $workingData)
         {
             if ($ResultRecord.ProcessPath.equals($ePath))
             {
 				try 
-				{
-					$ResultRecord.ARCH =$result.ARCH
-					$ResultRecord.ASLR =$result.ASLR
-					$ResultRecord.DEP =$result.DEP
-					$ResultRecord.Authenticode =$result.Authenticode
-					$ResultRecord.StrongNaming =$result.StrongNaming
-					$ResultRecord.SafeSEH =$result.SafeSEH
-					$ResultRecord.ControlFlowGuard =$result.ControlFlowGuard
-					$ResultRecord.HighentropyVA =$result.HighentropyVA
-					$ResultRecord.DotNET =$result.DotNET
+				{   #perhaps something more loop based can be done here in the future
+					$ResultRecord.ARCH=$result.ARCH
+					$ResultRecord.ASLR=$result.ASLR
+					$ResultRecord.DEP=$result.DEP
+					$ResultRecord.Authenticode=$result.Authenticode
+					$ResultRecord.StrongNaming=$result.StrongNaming
+					$ResultRecord.SafeSEH=$result.SafeSEH
+					$ResultRecord.ControlFlowGuard=$result.ControlFlowGuard
+					$ResultRecord.HighentropyVA=$result.HighentropyVA
+					$ResultRecord.DotNET=$result.DotNET
+					$ResultRecord.FileHash=$result.FileHash
+					$ResultRecord.HashAlgorithm=$result.HashAlgorithm
 				} 
 				catch { write-host "Error: (this should not happen) Failed to write results for ""$ePath""." }
                 $outputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null
             }
         }
     }
-    catch { write-host "Unexpected overall failure scanning ""$ePath""." }
+    catch { write-host "Unexpected overall failure scanning ""$ePath""." 
+    Write-Host $Error[0].InvocationInfo.ScriptLineNumber $Error[0] }
 }
 
-$outputData = Test-ProcessPrivilege -ProcessObjects $outputData -EA SilentlyContinue
+try #try to guard against possible issues since we hand all the data off and get it all back
+{
+	$tempOutputData = Test-ProcessPrivilege -ProcessObjects $outputData -EA SilentlyContinue
+	$outputData=$tempOutputData
+}
+catch { Write-Host Failed at TPP: $Error[0].InvocationInfo.ScriptLineNumber $Error[0] }
 
 #If adding additional columns to the output for the script via additions above, ensure that the new columns are included in the list below...or you'll waste a lot of time going around in circles #askmehow                                                                                                                                                                                  
-$outputData | Select-Object ProcessName, PID, ProcessPath, Protocol, LocalAddress, LocalPort, LocalPortName, RemoteAddress, RemotePort, RemoteHostName, RemotePortName, State, ProductName, FileDescription, FileVersion, Company, ProcessCreatedOn, UserName, ProcessServices, ProcessAttributes, DetectionTime, ConnectionCreationTime, ConnectionSentBytes, ConnectionSentPackets, ConnectionReceivedBytes, ConnectionReceivedPackets, ModuleFilename, ARCH, ASLR, DEP, Authenticode, StrongNaming, SafeSEH, ControlFlowGuard, HighentropyVA, DotNET, PrivilegeLevel, Privileges, AHAScraperVersion | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8
+$outputData | Select-Object ProcessName, PID, ProcessPath, Protocol, LocalAddress, LocalPort, LocalPortName, RemoteAddress, RemotePort, RemoteHostName, RemotePortName, State, ProductName, FileDescription, FileVersion, Company, ProcessCreatedOn, UserName, ProcessServices, ProcessAttributes, DetectionTime, ConnectionCreationTime, ConnectionSentBytes, ConnectionSentPackets, ConnectionReceivedBytes, ConnectionReceivedPackets, ModuleFilename, ARCH, ASLR, DEP, Authenticode, StrongNaming, SafeSEH, ControlFlowGuard, HighentropyVA, DotNET, PrivilegeLevel, Privileges, HashAlgorithm, FileHash, AHAScraperVersion | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8
+#$outputData | Select-Object * | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8 #need to try more things here later, really I just want the first few columns to be predictable, and then after that all the rest...so far not super easy
+
