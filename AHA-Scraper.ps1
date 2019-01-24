@@ -2,7 +2,7 @@
 # Bug/Enhancement req: Catalog signed files are not properly detected as signed since Get-PESecurity relies on Get-AuthenticodeSignature which does not work on Catalog-signed files
 # Bug/Enhancement req: Possibly scan binaries to see if GS Stack overrun protection was enabled at compile time
 
-$AHAScraperVersion = "v0.8.5b1"						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion = "v0.8.5b2"						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 $NetConnectionsFile = ".\NetConnections.csv"           
 $BinaryAnalysisFile = ".\BinaryAnalysis.csv"
 
@@ -47,6 +47,9 @@ foreach ($csvLine in $NetConnectionObjects) #Finally found a sensible way to tur
 }
 
 write-host "$NetConnectionsFile imported. Scanning detected binaries:"
+$sha512alg=new-object -type System.Security.Cryptography.SHA512Managed
+$sha1alg=new-object -type System.Security.Cryptography.SHA1Managed
+$md5alg=new-object -type System.Security.Cryptography.MD5CryptoServiceProvider
 ForEach ( $exePath in $exepaths ) 
 {
     $ePath = $exePath."Process Path" 
@@ -71,21 +74,23 @@ ForEach ( $exePath in $exepaths )
 		if (!$result.ControlFlowGuard) {$result.ControlFlowGuard="ScanError" }
 		if (!$result.HighentropyVA) { $result.HighentropyVA="ScanError" }
 		if (!$result.DotNET) { $result.DotNET="ScanError" }
-		if (!$result.FileHash) { $result.FileHash="ScanError" }
-		if (!$result.HashAlgorithm) { $result.HashAlgorithm="ScanError" }
+		if (!$result.SHA512) { $result.FileHash="ScanError" }
+		if (!$result.SHA1) { $result.HashAlgorithm="ScanError" }
+		if (!$result.MD5) { $result.HashAlgorithm="ScanError" }
 		try
 		{
 			$stream=$null
-			try { $stream = [System.IO.File]::OpenRead($ePath)}
+			try { $stream=[System.IO.File]::OpenRead($ePath)}
 			catch { }
 			if ($stream)
 			{
-				$hashAlg=new-object -type System.Security.Cryptography.SHA512Managed
-				$bytes=$hashAlg.ComputeHash($stream)
+				$result.SHA512=[System.BitConverter]::ToString($($sha512alg.ComputeHash($stream))).Replace("-", [String]::Empty).ToLower();
+				$stream.Position=0
+				$result.SHA1=[System.BitConverter]::ToString($($sha1alg.ComputeHash($stream))).Replace("-", [String]::Empty).ToLower();
+				$stream.Position=0
+				$result.MD5=[System.BitConverter]::ToString($($md5alg.ComputeHash($stream))).Replace("-", [String]::Empty).ToLower();
 				$stream.Dispose()
 				$stream.Close()
-				$result.FileHash=[System.BitConverter]::ToString($bytes).Replace("-", [String]::Empty).ToLower();
-				$result.HashAlgorithm ="SHA512"
 				#write-host "Successful hash of file ""$ePath"" is ""$result.FileHash""." #todo this line no longer prints properly
 			}
 		}
@@ -116,6 +121,6 @@ try #try to guard against possible issues since we hand all the data off and get
 catch { Write-Host Failed at TPP: $Error[0].InvocationInfo.ScriptLineNumber $Error[0] }
 
 #If adding additional columns to the output for the script via additions above, ensure that the new columns are included in the list below...or you'll waste a lot of time going around in circles #askmehow                                                                                                                                                                                  
-$outputData | Select-Object ProcessName, PID, ProcessPath, Protocol, LocalAddress, LocalPort, LocalPortName, RemoteAddress, RemotePort, RemoteHostName, RemotePortName, State, ProductName, FileDescription, FileVersion, Company, ProcessCreatedOn, UserName, ProcessServices, ProcessAttributes, DetectionTime, ConnectionCreationTime, ConnectionSentBytes, ConnectionSentPackets, ConnectionReceivedBytes, ConnectionReceivedPackets, ModuleFilename, ARCH, ASLR, DEP, Authenticode, StrongNaming, SafeSEH, ControlFlowGuard, HighentropyVA, DotNET, PrivilegeLevel, Privileges, HashAlgorithm, FileHash, AHAScraperVersion | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8
+$outputData | Select-Object ProcessName, PID, ProcessPath, Protocol, LocalAddress, LocalPort, LocalPortName, RemoteAddress, RemotePort, RemoteHostName, RemotePortName, State, ProductName, FileDescription, FileVersion, Company, ProcessCreatedOn, UserName, ProcessServices, ProcessAttributes, DetectionTime, ConnectionCreationTime, ConnectionSentBytes, ConnectionSentPackets, ConnectionReceivedBytes, ConnectionReceivedPackets, ModuleFilename, ARCH, ASLR, DEP, Authenticode, StrongNaming, SafeSEH, ControlFlowGuard, HighentropyVA, DotNET, PrivilegeLevel, Privileges, HashAlgorithm, SHA512, SHA1, MD5, AHAScraperVersion | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8
 #$outputData | Select-Object * | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8 #need to try more things here later, really I just want the first few columns to be predictable, and then after that all the rest...so far not super easy
 
