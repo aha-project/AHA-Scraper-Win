@@ -31,20 +31,19 @@ $exePaths = $NetConnectionObjects | select "Process Path" -unique #get the uniqu
 foreach ($csvLine in $NetConnectionObjects) #Finally found a sensible way to turn the import-csv data into a hashtable :)
 {
     $ResultRecord = @{}
-	$csvLine | Get-Member -MemberType Properties | SELECT -exp "Name" | % 
-	{
-			$key=$_ -replace ' ',''
-			if ($key -eq 'ProcessID') { $key='PID' }
-			$value=$($csvLine | SELECT -exp $_)
-			$ResultRecord[$key]=$value
-			#write-host "inserting key ""$key"" val ""$value"""
-    }
+	$csvLine | Get-Member -MemberType Properties | SELECT -exp "Name" | % {
+		$key=$_ -replace ' ',''
+		if ($key -eq 'ProcessID') { $key='PID' }
+		$value=$($csvLine | SELECT -exp $_)
+		$ResultRecord[$key]=$value
+		#write-host "inserting key ""$key"" val ""$value"""
+	}
 	$ResultRecord.ProductName=$ResultRecord.ProductName -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', '' #remove annoying unicode registered trademark symbols
-    $ResultRecord.FileDescription=$ResultRecord.FileDescription -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
-    $ResultRecord.FileVersion=$ResultRecord.FileVersion -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
-    $ResultRecord.Company=$ResultRecord.Company -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
-    $ResultRecord.AHAScraperVersion=$AHAScraperVersion
-    $workingData.Add($ResultRecord) | Out-Null #store this working data to the internal representation datastore
+	$ResultRecord.FileDescription=$ResultRecord.FileDescription -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
+	$ResultRecord.FileVersion=$ResultRecord.FileVersion -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
+	$ResultRecord.Company=$ResultRecord.Company -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
+	$ResultRecord.AHAScraperVersion=$AHAScraperVersion
+	$workingData.Add($ResultRecord) | Out-Null #store this working data to the internal representation datastore
 }
 
 write-host "$NetConnectionsFile imported. Scanning detected binaries:"
