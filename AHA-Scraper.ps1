@@ -2,7 +2,7 @@
 # Bug/Enhancement req: Catalog signed files are not properly detected as signed since Get-PESecurity relies on Get-AuthenticodeSignature which does not work on Catalog-signed files
 # Bug/Enhancement req: Possibly scan binaries to see if GS Stack overrun protection was enabled at compile time
 
-$AHAScraperVersion = "v0.8.5"						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion = "v0.8.5b1"						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 $NetConnectionsFile = ".\NetConnections.csv"           
 $BinaryAnalysisFile = ".\BinaryAnalysis.csv"
 
@@ -98,20 +98,7 @@ ForEach ( $exePath in $exepaths )
         {
             if ($ResultRecord.ProcessPath.equals($ePath))
             {
-				try 
-				{   #perhaps something more loop based can be done here in the future
-					$ResultRecord.ARCH=$result.ARCH
-					$ResultRecord.ASLR=$result.ASLR
-					$ResultRecord.DEP=$result.DEP
-					$ResultRecord.Authenticode=$result.Authenticode
-					$ResultRecord.StrongNaming=$result.StrongNaming
-					$ResultRecord.SafeSEH=$result.SafeSEH
-					$ResultRecord.ControlFlowGuard=$result.ControlFlowGuard
-					$ResultRecord.HighentropyVA=$result.HighentropyVA
-					$ResultRecord.DotNET=$result.DotNET
-					$ResultRecord.FileHash=$result.FileHash
-					$ResultRecord.HashAlgorithm=$result.HashAlgorithm
-				} 
+				try { $result.Keys | % { $ResultRecord[$_]=$result[$_] } } #copy data out of the results from binary scans into each relevant line of results records
 				catch { write-host "Error: (this should not happen) Failed to write results for ""$ePath""." }
                 $outputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null
             }
