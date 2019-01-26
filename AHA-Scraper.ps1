@@ -78,7 +78,7 @@ ForEach ( $exePath in ($NetConnectionObjects | select 'Process Path' -unique) )
 				$tmp=Get-PESecurity -File $ePath -EA SilentlyContinue #TODO: somehow if I run this against a certain exe that cause it to fall out to the catch from a regular power shell, i get a partial answer, but if I do it within this trycatch even with -EA SilentlyContinue, $tmp is never set and we end up in the catch
 				$tmp | Get-Member -MemberType Properties | ForEach-Object { $FileResults[$_.Name]=$tmp[$_.Name] } #copy over what we got from PESecurity
 			} #try to scan binary located at $ePath
-			catch { Write-Host ('PESEcurity: Unable to scan file Error: {0}' -f @($Error[0])) }
+			catch { Write-Host ('PESecurity: Unable to scan file Error: {0}' -f @($Error[0])) }
 		}
 		$BinaryScanResults[$ePath]=$FileResults  #insert results from scanning this binary into the dataset of scanned binaries
     }
