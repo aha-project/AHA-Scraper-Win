@@ -2,7 +2,13 @@
 # Bug/Enhancement req: Catalog signed files are not properly detected as signed since Get-PESecurity relies on Get-AuthenticodeSignature which does not work on Catalog-signed files
 # Bug/Enhancement req: Possibly scan binaries to see if GS Stack overrun protection was enabled at compile time
 
-$AHAScraperVersion='v0.8.5b7'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+
+
+# print poershell version at launch
+# print os version at launch
+
+
+$AHAScraperVersion='v0.8.5b8'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 $NetConnectionsFile='.\NetConnections.csv'           
 $BinaryAnalysisFile='.\BinaryAnalysis.csv'
 
@@ -13,7 +19,10 @@ try { Clear-Content $BinaryAnalysisFile -EA SilentlyContinue | Out-Null } catch 
 Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1                   #import the Get-PESecurity powershell module
 Import-Module .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1      #import the Get-PESecurity powershell module
 
-write-host ('AHA-Scraper {0} Started. Waiting for currPorts to output csv file...' -f @($AHAScraperVersion))
+$tempInfo=(Get-WmiObject win32_operatingsystem)
+$OurEnvInfo='PowerShell {0} on {1}{2}' -f @($PSVersionTable.PSVersion,$tempInfo.caption,$tempInfo.OSArchitecture)
+write-host ('AHA-Scraper {0} starting in {1}' -f @($AHAScraperVersion,$OurEnvInfo))
+write-host ('Waiting for currPorts to output csv file...')
 while($true)
 {
     try { Get-Content $NetConnectionsFile -Wait -EA Stop | Select-String 'Process' | %{write-host 'NetConnections file generated.'; break } } #attempt to read in a 1s loop until the file shows up
@@ -41,6 +50,7 @@ foreach ($csvLine in $NetConnectionObjects) #turn each line of the imported csv 
 	$ResultRecord.FileVersion=$ResultRecord.FileVersion -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
 	$ResultRecord.Company=$ResultRecord.Company -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
 	$ResultRecord.AHAScraperVersion=$AHAScraperVersion  #add the scraper version to each line
+	$ResultRecord.AHARuntimeEnvironment=$OurEnvInfo  #add the runtime info
 	$WorkingData.Add($ResultRecord) | Out-Null #store this working data to the internal representation datastore
 }
 write-host 'CSV File imported. Scanning detected binaries:'
