@@ -35,7 +35,7 @@ The levels are defined below.
 	    SeTcbPrivilege
         SeLoadDriverPrivilege
 
-    (2) Blacklist Violation - Running with privileges Microsoft explicitly states
+    (2) Violation - Running with privileges Microsoft explicitly states
     never to grant to a user due to security risks.
         SeCreateTokenPrivilege
         SeCreatePermanentPrivilege
@@ -43,7 +43,7 @@ The levels are defined below.
         SeRelabelPrivilege
         SeSyncAgentPrivilege
 
-    (3) Administrative User - Running with privileges Microsoft recommends reserving
+    (3) Administrative - Running with privileges Microsoft recommends reserving
     for administrative users or the IT Team, exclusively.
         SeCreatePageFilePrivilege
         SeIncreaseBasePriorityPrivilege
@@ -73,132 +73,89 @@ The levels are defined below.
         SeCreateSymbolicLinkPrivilege
         SeRestorePrivilege
 
-    (6) Standard User - No privileges detected that present increased exposure.
+    (6) Standard - No privileges detected that present increased exposure.
         SeIncreaseWorkingSetPrivilege
         SeTimeZonePrivilege
         SeChangeNotifyPrivilege
         SeCreateGlobalPrivilege
         SeUndockPrivilege
 
-.PARAMETER ProcessObjects
-Pass in an arraylist of objects which, at minimum, contain noteproperties
-for PID, UserName, and ProcessPath.
+.PARAMETER ProcessId
+Pass in the PID for the process.
 
 .OUTPUTS
-Returns the original arraylist with an additional noteproperty added to
-each object indicating whether or not the process has system level privilege
-or the functional equivalent.
+Returns an object with two noteproperties indicating the privileges of a 
+process and the privilege level.
 
 .EXAMPLE
-$outputData = Test-ProcessPrivilege -ProcessObjects $outputData -EA SilentlyContinue
+$outputData = Test-ProcessPrivilege -ProcessId $pid -EA SilentlyContinue
 
 #>
 function Test-ProcessPrivilege {
-
-    [OutputType([System.Collections.ArrayList])]
     [CmdletBinding(DefaultParameterSetName = "Default", SupportsShouldProcess = $false)]
     param(
-        [parameter(Mandatory = $true, Position = 0, ParameterSetName = "Default")]
-        [System.Collections.ArrayList]
-        $ProcessObjects
+        [Parameter(Mandatory = $true, Position = 0, ParameterSetName = "Default")]
+        [Alias("pid")]
+        [System.Int32]
+        $ProcessId
     )
 
-    $systemUserName = GetSystemUserName
+    if (!(IsRunningElevated)) { return FormatResponse "Skipped" "Skipped" }
+    if (IsSystemProcess $ProcessID) { return FormatResponse "SYSTEM" "SYSTEM" }
 
-    [System.Collections.ArrayList]$returnData = New-Object System.Collections.ArrayList($null)
-
-    if (!(IsRunningElevated)) {
-        Write-Host "Info: Test-ProcessPrivileges requires running with elevation, skipping privilege check."
-        foreach ($ProcessObject in $ProcessObjects) {
-            $ProcessObject = UpdateProcessObject -ProcessObject $ProcessObject -PrivilegeLevel "Skipped" -Privileges "Skipped"
-            $returnData.Add($ProcessObject) | Out-Null
-        }
-        return $returnData
+    try {
+        $privilegesList = EnumerateEnabledRights $ProcessID
+        $privilegeLevel = GetPrivilegeLevelFromList $privilegesList
+        return FormatResponse $privilegeLevel $privilegesList
     }
-
-    $ProcessIDs = $ProcessObjects | Select-Object PID, UserName, ProcessPath -unique
-
-    $PrivilegeHelper = LoadPrivilegeHelperDynamicType
-
-    foreach ($ProcessID in $ProcessIDs) {
-        # Identify trivial cases where system privileges are in place.
-        if (IsSystemProcess $ProcessID $systemUserName) {
-            $Privileges = "SYSTEM"
-            $PrivilegeLevel = "SYSTEM"
-        }
-        else {
-            # Retrieve privileges for the process and check
-            try {
-                $privilegesList = EnumerateEnabledRights $PrivilegeHelper $ProcessID
-                $PrivilegeLevel = GetPrivilegeLevelProperty $privilegesList
-                $Privileges = GetPrivilegesProperty $privilegesList
-            }
-            catch {
-                $Privileges = "ScanError"
-                $PrivilegeLevel = "ScanError"
-                Write-Host ("Error: " + $Error[0].Exception.Message)
-            }
-        }
-
-        foreach ($ProcessObject in $ProcessObjects) {
-            if ($ProcessObject.PID.equals($ProcessID.PID)) {
-                $ProcessObject = UpdateProcessObject -ProcessObject $ProcessObject -PrivilegeLevel $PrivilegeLevel -Privileges $Privileges
-                $returnData.Add($ProcessObject) | Out-Null
-            }
-        }
+    catch {
+        Write-Host ("Error: " + $Error[0].Exception.Message)
+        return FormatResponse "ScanError" "ScanError"
     }
-
-    return $returnData
 }
 
-function UpdateProcessObject
+function FormatResponse 
 {
     param(
-        [parameter(Mandatory = $true, Position = 0, ParameterSetName = "Default")]
-        [System.Object]
-        $ProcessObject,
-        [parameter(Mandatory = $true, Position = 1, ParameterSetName = "Default")]
+        [Parameter(Mandatory = $true, Position = 0, ParameterSetName = "Default")]
         [System.String]
         $PrivilegeLevel,
-        [parameter(Mandatory = $true, Position = 2, ParameterSetName = "Default")]
-        [System.String]
+        [Parameter(Mandatory = $true, Position = 1, ParameterSetName = "Default")]
+        [System.String[]]
         $Privileges
     )
-
-    $ProcessObject | Add-Member -MemberType NoteProperty -Name PrivilegeLevel -Value $PrivilegeLevel
-    $ProcessObject | Add-Member -MemberType NoteProperty -Name Privileges -Value $Privileges
-
-    return $ProcessObject
+    $privilegeInfo = New-Object PSCustomObject -Property @{
+        PrivilegeLevel = $PrivilegeLevel
+        Privileges = (FormatPrivileges $Privileges)
+    }
+    return $privilegeInfo
 }
 
-function LoadPrivilegeHelperDynamicType {
-    $TypeDefinitionFile = 'deps\Test-ProcessPrivilege\HelperPrivilege.cs'
-    $TypeDefinitionFilePath = Join-Path (Split-Path $script:MyInvocation.MyCommand.Path) -ChildPath $TypeDefinitionFile
-    $dynamicType = Add-Type -Path $TypeDefinitionFilePath -PassThru
-
-    return $dynamicType[0]
-}
 function EnumerateEnabledRights {
     param(
-        [parameter(Mandatory = $false, Position = 0, ParameterSetName = "Default")]
-        [System.Object]
-        $DynamicType,
-        [parameter(Mandatory = $true, Position = 1, ParameterSetName = "Default")]
-        [System.Object]
+        [Parameter(Mandatory = $true, Position = 0, ParameterSetName = "Default")]
+        [System.Int32]
         $ProcessID
     )
-
-    $privilegesList = $DynamicType::EnumRights($ProcessID.PID)
+    $typeDefinitionFile = 'HelperPrivilege.cs'
+    $typeDefinitionFilePath = Join-Path (GetScriptPath) -ChildPath $typeDefinitionFile
+    $privilegeHelper = (Add-Type -Path $typeDefinitionFilePath -PassThru)[0]
+    $privilegesList = $privilegeHelper::EnumRights($ProcessID)
     $privilegesList = $privilegesList | Where-Object { $null -ne $_ } | Where-Object { $_.ToUpper().Contains("ENABLED") }
 
     return $privilegesList
 }
 
-function GetSystemUserName {
-    $systemSID = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-18")
-    $systemUser = $systemSID.Translate([System.Security.Principal.NTAccount])
+function GetScriptPath {
+    $scriptFolder = (Get-Variable 'PSScriptRoot' -ErrorAction 'SilentlyContinue').Value
+    if (!$scriptFolder) {
+        if ($MyInvocation.MyCommand.Path) { $scriptFolder = Split-Path -Path $MyInvocation.MyCommand.Path -Parent }
+    }
+    if (!$scriptFolder) {
+        if ($ExecutionContext.SessionState.Module.Path) { $scriptFolder = Split-Path (Split-Path $ExecutionContext.SessionState.Module.Path) }
+    }
 
-    return $systemUser.Value
+    return $scriptFolder
 }
 
 function IsRunningElevated {
@@ -211,56 +168,50 @@ function IsRunningElevated {
 function IsSystemProcess {
     [OutputType([System.Boolean])]
     param(
-        [parameter(Mandatory = $true, Position = 0, ParameterSetName = "Default")]
-        [System.Object]
-        $ProcessID,
-        [parameter(Mandatory = $false, Position = 1, ParameterSetName = "Default")]
-        [System.String]
-        $SystemUsername = "SYSTEM"
+        [Parameter(Mandatory = $true, Position = 0, ParameterSetName = "Default")]
+        [System.Int32]
+        $ProcessID
     )
-    # System process and Idle process
-    $IsSystemProcess = $ProcessID.PID -eq 0 -or $ProcessID.PID -eq 4
-    # Processes explicitly marked as running as system
-    $IsRunningExplicitlyAsSystem = $ProcessID.UserName.ToUpper() -eq $SystemUsername.ToUpper()
-    # CurrPorts cannot get the user info for core system processes
-    $NoUserInfo = [system.string]::IsNullOrEmpty($ProcessID.UserName)
 
-    return ($IsSystemProcess -or $IsRunningExplicitlyAsSystem -or $NoUserInfo)
+    # Is System or System Idle Process?
+    if($ProcessID -eq 0 -or $ProcessID -eq 4) { return $true }
+    # Is running explicitly as system user?
+    $systemSID = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-18")
+    $systemUserName = $systemSID.Translate([System.Security.Principal.NTAccount]).Value
+    $processUser = (Get-WmiObject Win32_Process -Filter ("ProcessId='{0}'" -f $ProcessID)).GetOwner() `
+        | Select-Object Domain, User
+    $processUserName = "{0}\{1}" -f $processUser.Domain, $processUser.User
+
+    return [System.String]::Equals($systemUserName, $processUserName, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-function GetPrivilegesProperty
-{
+function FormatPrivileges {
     [OutputType([System.String])]
     param(
-        [parameter(Position = 0, ParameterSetName = "Default")]
+        [Parameter(Position = 0, ParameterSetName = "Default")]
         [System.String[]]
         $PrivilegesList
     )
 
-    if($null -eq $PrivilegesList -or $PrivilegesList.Length -eq 0) { return "None" }
+    if ($null -eq $PrivilegesList -or $PrivilegesList.Length -eq 0) { return "None" }
 
-    $PrivilegeNames = @()
-    foreach ($privilege in $privilegesList)
-    { $PrivilegeNames += $privilege.Split("=")[0] }
-
-    return $PrivilegeNames -join "|"
+    return ($PrivilegesList | ForEach-Object { $_.Split("=")[0] }) -join "|"
 }
 
-function GetPrivilegeLevelProperty {
+function GetPrivilegeLevelFromList {
     [OutputType([System.String])]
     param(
-        [parameter(Position = 0, ParameterSetName = "Default")]
+        [Parameter(Position = 0, ParameterSetName = "Default")]
         [System.String[]]
         $PrivilegesList
     )
 
-    if($null -eq $PrivilegesList -or $PrivilegesList.Length -eq 0) { return "Standard User" }
-
-    $levelDefinitions = @(
-        @{
-            Level      = "SYSTEM (Equivalent)"
+    if ($null -eq $PrivilegesList -or $PrivilegesList.Length -eq 0) { return "Standard User" }
+  
+    $privilegeLevels = @(
+        @{  # You can escalate to system with any of these
+            Level      = "SYSTEM"
             Privileges = @(
-                # You can escalate to system with any of these
                 "SeDebugPrivilege",
                 "SeTakeOwnershipPrivilege",
                 "SeTcbPrivilege",
@@ -268,52 +219,45 @@ function GetPrivilegeLevelProperty {
                 "SeLoadDriverPrivilege"
             )
         },
-        @{
-            Level      = "Blacklist Violation"
+        @{  # MS recommends never granting to any identity
+            Level      = "Violation"
             Privileges = @(
-                # MS recommends never giving these to anyone
                 "SeCreatePermanentPrivilege",
                 "SeTrustedCredManAccessPrivilege",
                 "SeRelabelPrivilege",
                 "SeSyncAgentPrivilege"
             )
         },
-        @{
-            Level      = "Administrative User"
+        @{  # Privileges reserved for administrators or IT Team
+            Level      = "Administrative"
             Privileges = @(
-                # Privileges reserved for Admins
                 "SeCreatePagefilePrivilege",
                 "SeIncreaseBasePriorityPrivilege",
                 "SeSystemEnvironmentPrivilege",
                 "SeManageVolumePrivilege",
                 "SeSystemProfilePrivilege",
                 "SeSecurityPrivilege",
-                # Privileges typically reserved for the IT Team
                 "SeMachineAccountPrivilege",
                 "SeEnableDelegationPrivilege"
             )
         }
-        @{
+        @{  # Privileges reserved for services
             Level      = "Service"
-            Privileges = @(
-                # Privileges reserved for services
+            Privileges = @(  
                 "SeAuditPrivilege",
                 "SeImpersonatePrivilege",
                 "SeBackupPrivilege"
             )
         }
-        @{
+        @{  # Privileges reserved for operators, trusted users, or interactive users
             Level      = "Operator"
             Privileges = @(
-                # Privileges reserved for operators
                 "SeRemoteShutdownPrivilege",
                 "SeSystemtimePrivilege",
                 "SeShutdownPrivilege",
                 "SeInteractiveLogonRight",
-                # Privileges reserved for trusted users
                 "SeCreateSymbolicLinkPrivilege",
                 "SeRestorePrivilege",
-                # Privileges typical for a user
                 "SeNetworkLogonRight",
                 "SeRemoteInteractiveLogonRight",
                 "SeProfileSingleProcessPrivilege",
@@ -322,20 +266,13 @@ function GetPrivilegeLevelProperty {
         }
     )
 
-    # Test each level definition.
-    foreach ($levelDefinition in $levelDefinitions) {
-        # Check all privileges for the process.
-        foreach ($privilege in $PrivilegesList) {
-            $privilege = $privilege.ToUpper()
-            # Check against all privileges for the current level.
-            foreach ($targetPrivilege in $levelDefinition.Privileges) {
-                # Return once the first match is found.
-                if ($privilege.Contains($targetPrivilege.ToUpper())) {
-                    return $levelDefinition.Level
-                }
+    foreach ($privilegeLevel in $privilegeLevels) {
+        foreach ($processPrivilege in $PrivilegesList) {
+            foreach ($targetPrivilege in $privilegeLevel.Privileges) {
+                if ($processPrivilege.IndexOf($targetPrivilege, [System.StringComparison]::OrdinalIgnoreCase) -gt -1) { return $privilegeLevel.Level }
             }
         }
     }
 
-    return "Standard User"
+    return "Standard"
 }
