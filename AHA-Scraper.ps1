@@ -1,12 +1,12 @@
-$AHAScraperVersion='v0.8.5b12'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.5b13'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 $NetConnectionsFile='.\NetConnections.csv'           
 $BinaryAnalysisFile='.\BinaryAnalysis.csv'
 
 try { Clear-Content $NetConnectionsFile -EA SilentlyContinue | Out-Null } catch {}  #delete the old output csv files from last run if they exist, or we will end up with weird results (because this script will start reading while cports is writing over the old file)
 try { Clear-Content $BinaryAnalysisFile -EA SilentlyContinue | Out-Null } catch {}
 
-Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1                   #import the Get-PESecurity powershell module
-Import-Module .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1      #import the Get-PESecurity powershell module
+Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1               #import the Get-PESecurity powershell module
+. .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1              #dot source the Get-PESecurity powershell module
 
 $TempInfo=(Get-WmiObject win32_operatingsystem)
 $OurEnvInfo='PowerShell {0} on {1} {2}' -f @($PSVersionTable.PSVersion.ToString().trim(),$TempInfo.caption.toString().trim(),$TempInfo.OSArchitecture.ToString().trim())

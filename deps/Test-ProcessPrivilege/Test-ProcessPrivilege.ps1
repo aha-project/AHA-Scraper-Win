@@ -147,12 +147,14 @@ function EnumerateEnabledRights {
 }
 
 function GetScriptPath {
+    # PSScriptRoot should provide the most reliable root for PS3+
     $scriptFolder = (Get-Variable 'PSScriptRoot' -ErrorAction 'SilentlyContinue').Value
     if (!$scriptFolder) {
         if ($MyInvocation.MyCommand.Path) { $scriptFolder = Split-Path -Path $MyInvocation.MyCommand.Path -Parent }
     }
+    # Fall back to default value for dependency folder if we can not resolve root or invocation path, e.g. with PS2
     if (!$scriptFolder) {
-        if ($ExecutionContext.SessionState.Module.Path) { $scriptFolder = Split-Path (Split-Path $ExecutionContext.SessionState.Module.Path) }
+        $scriptFolder = Join-Path $PWD -ChildPath "deps\Test-ProcessPrivilege"  
     }
 
     return $scriptFolder
