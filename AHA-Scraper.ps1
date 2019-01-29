@@ -1,4 +1,4 @@
-$AHAScraperVersion='v0.8.5b10'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.5b12'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 $NetConnectionsFile='.\NetConnections.csv'           
 $BinaryAnalysisFile='.\BinaryAnalysis.csv'
 
@@ -27,6 +27,7 @@ Write-Host ('Importing "{0}"...' -f @($NetConnectionsFile))
 $NetConnectionObjects=$(import-csv -path $NetConnectionsFile -delimiter ',')  #import the csv from currports
 [System.Collections.ArrayList]$WorkingData=New-Object System.Collections.ArrayList($null) #create empty array list for our working dataset
 [System.Collections.ArrayList]$OutputData=New-Object System.Collections.ArrayList($null)  #create empty array list for final output dataset
+$ProcessesByPid=@{}
 
 foreach ($CSVLine in $NetConnectionObjects) #turn each line of the imported csv data into a hashtable, also clean up some input data at the same time
 {
@@ -44,6 +45,7 @@ foreach ($CSVLine in $NetConnectionObjects) #turn each line of the imported csv 
 	$ResultRecord.AHAScraperVersion=$AHAScraperVersion  #add the scraper version
 	$ResultRecord.AHARuntimeEnvironment=$OurEnvInfo     #add the runtime info
 	$ResultRecord.remove('WindowTitle')					#ignore useless column 'WindowTitle'
+	$ProcessesByPid[$ResultRecord.PID]=$ResultRecord  #used for looking up an example of a process via a pid
 	$WorkingData.Add($ResultRecord) | Out-Null #store this working data to the internal representation datastore
 }
 
@@ -55,17 +57,15 @@ $BinaryScanError=@{ 'ARCH'='ScanError';'ASLR'='ScanError';'DEP'='ScanError';'Aut
 
 Write-Host 'CSV File imported. Scanning detected binaries:'
 $BinaryScanResults=@{} #overall result set produced from scanning all unique deduplicated binaries found in $NetConnectionObjects
-ForEach ( $EXEInfo in ($NetConnectionObjects | select 'Process Path' -unique) )
+ForEach ( $ProcessToScan in $ProcessesByPid.values ) #use the PID as the uniqe-ifier here since a single .exe can be launcehd by multiple users
 {
-	$EXEPath=$EXEInfo.'Process Path' #get the actual path 
-	$ProcessID=$EXEInfo.'Process ID'
-	if (!$EXEPath) { continue }      #skip if there's no path (occurs for certain system processes)...we cant scan it if it doesnt exist
+	$EXEPath=$ProcessToScan.ProcessPath #$EXEInfo.'Process Path' #get the actual path 
+	$ProcessID=$ProcessToScan.PID #$EXEInfo.'Process ID'
 	try
-    {
-		Write-Host ('Scanning "{0}"...' -f @($EXEPath))
+    {	if ( ($ProcessID -eq 0) -and (!$EXEPath) ) { continue }      #skip if there's no path to exe defined and we're process zero, to hide _only_ the expected failure, others we should print about
+		Write-Host ('Scanning ProcessID={0} "{1}"...' -f @($ProcessID,$EXEPath))
 		$FileResults=@{}
 		$BinaryScanError.Keys | % { $FileResults[$_]=$BinaryScanError[$_] } #fill in placeholder values to fill in all known fields with 'ScanError' in case they are not populated by any of the scans
-		
 		$FileToHash=$null
 		try { $FileToHash=[System.IO.File]::OpenRead($EXEPath) } #open file so we can hash the data
 		catch { Write-Host ( 'Unable to open file "{0}" for scanning.' -f @($EXEPath)) }
@@ -79,20 +79,21 @@ ForEach ( $EXEInfo in ($NetConnectionObjects | select 'Process Path' -unique) )
 			$FileToHash.Close();
 			try 
 			{	#This scan will populate 'ARCH', 'ASLR', 'DEP', 'Authenticode', 'StrongNaming', 'SafeSEH', 'ControlFlowGuard', 'HighEntropyVA', 'DotNET'
+			
 				$Temp=Get-PESecurity -File $EXEPath -EA SilentlyContinue
 				$Temp | Get-Member -MemberType Properties | ForEach-Object { $FileResults[$_.Name]=$Temp[$_.Name] } #copy over what we got from PESecurity
 			}
 			catch { Write-Host ('PESecurity: Unable to scan file. Error: {0}' -f @($Error[0])) }
 			try
 			{	#This scan will populate 'PrivilegeLevel','Privileges' in the final output file
-				$privilegeInfo = Test-ProcessPrivilege -ProcessId $ProcessID -EA SilentlyContinue
-				$FileResults.PrivilegeLevel = $privilegeInfo.PrivilegeLevel
-				$FileResults.Privileges = $privilegeInfo.Privileges
+				$PrivilegeInfo = Test-ProcessPrivilege -processId $ProcessID -EA SilentlyContinue
+				$FileResults.PrivilegeLevel = $PrivilegeInfo.PrivilegeLevel
+				$FileResults.Privileges = $PrivilegeInfo.Privileges
 			}
-			catch { Write-Host ('Test-ProcessPrivilege: Unable to scan file. Error: {0}' -f @($Error[0])) }
+			catch { Write-Host ('Test-ProcessPrivilege: Unable to check PID={0}. Error: {1}' -f @($ProcessID,$Error[0])) }
 		}
 		$FileResults.remove('FileName')  #remove unnecessary result from Get-PESecurity
-		$BinaryScanResults[$EXEPath]=$FileResults  #insert results from scanning this binary into the dataset of scanned binaries
+		$BinaryScanResults[$ProcessID]=$FileResults  #insert results from scanning this binary into the dataset of scanned binaries
     }
 	catch { Write-Host ('Unexpected overall failure scanning "{0}" line: {1} Error: {2}' -f @($EXEPath,$Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
 }
@@ -102,7 +103,7 @@ foreach ($ResultRecord in $WorkingData)
 	try
 	{
 		$ScanResult=$null;
-		if ($($ResultRecord.ProcessPath)) { $ScanResult=$($BinaryScanResults[$($ResultRecord.ProcessPath)]) }   #try to grab the correct result from dataset of scanned binaries
+		if ($($ResultRecord.PID)) { $ScanResult=$($BinaryScanResults[$($ResultRecord.PID)]) }   #try to grab the correct result from dataset of scanned binaries
 		if (!$ScanResult) { $ScanResult=$BinaryScanError }                              #if we cant find a result for this EXEPath, we'll use the default set of errors
 		$ScanResult.Keys | % { $ResultRecord[$_]=$ScanResult[$_] }                      #copy the results for the binary into this line of the output
 	}
@@ -122,3 +123,5 @@ $totalScanTime.Stop()
 Write-Host ('Complete, elapsed time: {0}.' -f @($totalScanTime.Elapsed)) #report how long it took to scan/process everything
 
 $OutputData | Select-Object $SortedColumns | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8 # write all the results to file
+
+#Start-Sleep 100 #only uncomment for testing in situations where the window pops up and then closes
