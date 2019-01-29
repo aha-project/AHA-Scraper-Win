@@ -1,28 +1,33 @@
-$AHAScraperVersion='v0.8.5b13'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.5b14'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 $NetConnectionsFile='.\NetConnections.csv'           
 $BinaryAnalysisFile='.\BinaryAnalysis.csv'
 
-try { Clear-Content $NetConnectionsFile -EA SilentlyContinue | Out-Null } catch {}  #delete the old output csv files from last run if they exist, or we will end up with weird results (because this script will start reading while cports is writing over the old file)
-try { Clear-Content $BinaryAnalysisFile -EA SilentlyContinue | Out-Null } catch {}
-
 Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1               #import the Get-PESecurity powershell module
 . .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1              #dot source the Get-PESecurity powershell module
+
+try { if ( Test-Path $NetConnectionsFile ) { Remove-Item $NetConnectionsFile } } #delete the old input csv file from last run, if exists, or we will end up with weird results (because this script will start reading while cports is writing over the old file)
+catch { Write-Warning 'Unable to delete "{0}", there may be a permissions issue. Error: {1}' -f @($NetConnectionsFile,$Error[0])}
+try { if ( Test-Path $BinaryAnalysisFile ) { Clear-Content $BinaryAnalysisFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
+catch { Write-Warning 'Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($BinaryAnalysisFile,$Error[0])}
 
 $TempInfo=(Get-WmiObject win32_operatingsystem)
 $OurEnvInfo='PowerShell {0} on {1} {2}' -f @($PSVersionTable.PSVersion.ToString().trim(),$TempInfo.caption.toString().trim(),$TempInfo.OSArchitecture.ToString().trim())
 Write-Host ('AHA-Scraper {0} starting in {1}' -f @($AHAScraperVersion,$OurEnvInfo))
 
-Write-Host ('Waiting for currPorts to output csv file...')
 .\deps\cports\cports.exe /cfg .\cports.cfg /scomma $NetConnectionsFile    #call cports and ask for a CSV. BTW if the .cfg file for cports is not present, this will break, because we need the CSV column headrs option set
 while($true)
 {
-    try { Get-Content $NetConnectionsFile -Wait -EA Stop | Select-String 'Process' | %{ Write-Host 'NetConnections file generated.'; break } } #attempt to read in a 1s loop until the file shows up
-    catch {}
+	Write-Host ('Waiting for currPorts to output csv file...')
+	try 
+	{ 
+		if ( Test-Path $NetConnectionsFile ) { Get-Content $NetConnectionsFile -Wait -EA Stop | Select-String 'Process' | %{ Write-Host 'NetConnections file generated.'; break } }
+	} #attempt to read in a 1s loop until the file shows up
+    catch { Write-Warning ( 'Unable to open input file. Probably fine, we will try again soon. Error:' -f @($Error[0])) }
     Start-Sleep 1 #sleep for 1s while we wait for file
 }
 Start-Sleep 1 #sleep for one more second to ensure the file is fully written/consistent on disk (which it should be, since cports has already exited, this is hopefully unnecessary, but seemed like a good idea.
-$totalScanTime=[Diagnostics.Stopwatch]::StartNew()
 
+$totalScanTime=[Diagnostics.Stopwatch]::StartNew()
 Write-Host ('Importing "{0}"...' -f @($NetConnectionsFile))
 $NetConnectionObjects=$(import-csv -path $NetConnectionsFile -delimiter ',')  #import the csv from currports
 [System.Collections.ArrayList]$WorkingData=New-Object System.Collections.ArrayList($null) #create empty array list for our working dataset
@@ -68,7 +73,7 @@ ForEach ( $ProcessToScan in $ProcessesByPid.values ) #use the PID as the uniqe-i
 		$BinaryScanError.Keys | % { $FileResults[$_]=$BinaryScanError[$_] } #fill in placeholder values to fill in all known fields with 'ScanError' in case they are not populated by any of the scans
 		$FileToHash=$null
 		try { $FileToHash=[System.IO.File]::OpenRead($EXEPath) } #open file so we can hash the data
-		catch { Write-Host ( 'Unable to open file "{0}" for scanning.' -f @($EXEPath)) }
+		catch { Write-Warning -Message ( 'Unable to open file "{0}" for scanning.' -f @($EXEPath)) }
 		if ($FileToHash)  #if we couldn't open the file there's no point in attempting the following
 		{
 			$FileResults.SHA512=[System.BitConverter]::ToString($($SHA512Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower(); $FileToHash.Position=0; #compute the sha512 hash, rewind stream
@@ -83,19 +88,19 @@ ForEach ( $ProcessToScan in $ProcessesByPid.values ) #use the PID as the uniqe-i
 				$Temp=Get-PESecurity -File $EXEPath -EA SilentlyContinue
 				$Temp | Get-Member -MemberType Properties | ForEach-Object { $FileResults[$_.Name]=$Temp[$_.Name] } #copy over what we got from PESecurity
 			}
-			catch { Write-Host ('PESecurity: Unable to scan file. Error: {0}' -f @($Error[0])) }
+			catch { Write-Warning ('PESecurity: Unable to scan file. Error: {0}' -f @($Error[0])) }
 			try
 			{	#This scan will populate 'PrivilegeLevel','Privileges' in the final output file
 				$PrivilegeInfo = Test-ProcessPrivilege -processId $ProcessID -EA SilentlyContinue
 				$FileResults.PrivilegeLevel = $PrivilegeInfo.PrivilegeLevel
 				$FileResults.Privileges = $PrivilegeInfo.Privileges
 			}
-			catch { Write-Host ('Test-ProcessPrivilege: Unable to check PID={0}. Error: {1}' -f @($ProcessID,$Error[0])) }
+			catch { Write-Warning ('Test-ProcessPrivilege: Unable to check PID={0}. Error: {1}' -f @($ProcessID,$Error[0])) }
 		}
 		$FileResults.remove('FileName')  #remove unnecessary result from Get-PESecurity
 		$BinaryScanResults[$ProcessID]=$FileResults  #insert results from scanning this binary into the dataset of scanned binaries
     }
-	catch { Write-Host ('Unexpected overall failure scanning "{0}" line: {1} Error: {2}' -f @($EXEPath,$Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
+	catch { Write-Warning ('Unexpected overall failure scanning "{0}" line: {1} Error: {2}' -f @($EXEPath,$Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
 }
 
 foreach ($ResultRecord in $WorkingData)
@@ -107,7 +112,7 @@ foreach ($ResultRecord in $WorkingData)
 		if (!$ScanResult) { $ScanResult=$BinaryScanError }                              #if we cant find a result for this EXEPath, we'll use the default set of errors
 		$ScanResult.Keys | % { $ResultRecord[$_]=$ScanResult[$_] }                      #copy the results for the binary into this line of the output
 	}
-	catch { Write-Host ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
+	catch { Write-Warning ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
 	$OutputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null # TODO:I don't recall entirely why we have to make it a PSObject for export-csv to like it...something to look into in the future I suppose
 }
 
@@ -123,5 +128,3 @@ $totalScanTime.Stop()
 Write-Host ('Complete, elapsed time: {0}.' -f @($totalScanTime.Elapsed)) #report how long it took to scan/process everything
 
 $OutputData | Select-Object $SortedColumns | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8 # write all the results to file
-
-#Start-Sleep 100 #only uncomment for testing in situations where the window pops up and then closes
