@@ -1,4 +1,4 @@
-$AHAScraperVersion='v0.8.5b14'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.5b16'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 $NetConnectionsFile='.\NetConnections.csv'           
 $BinaryAnalysisFile='.\BinaryAnalysis.csv'
 
@@ -58,7 +58,7 @@ $SHA512Alg=new-object -type System.Security.Cryptography.SHA512Managed          
 $SHA256Alg=new-object -type System.Security.Cryptography.SHA256Managed
 $SHA1Alg  =new-object -type System.Security.Cryptography.SHA1Managed
 $MD5Alg   =new-object -type System.Security.Cryptography.MD5CryptoServiceProvider
-$BinaryScanError=@{ 'ARCH'='ScanError';'ASLR'='ScanError';'DEP'='ScanError';'Authenticode'='ScanError';'StrongNaming'='ScanError';'SafeSEH'='ScanError';'ControlFlowGuard'='ScanError';'HighentropyVA'='ScanError';'DotNET'='ScanError';'SHA512'='ScanError';'SHA256'='ScanError';'SHA1'='ScanError';'MD5'='ScanError';'PrivilegeLevel'='ScanError';'Privileges'='ScanError' }
+$BinaryScanError=@{ 'ARCH'='ScanError';'ASLR'='ScanError';'DEP'='ScanError';'Authenticode'='ScanError';'StrongNaming'='ScanError';'SafeSEH'='ScanError';'ControlFlowGuard'='ScanError';'HighentropyVA'='ScanError';'DotNET'='ScanError';'SumSHA512'='ScanError';'SumSHA256'='ScanError';'SumSHA1'='ScanError';'SumMD5'='ScanError';'PrivilegeLevel'='ScanError';'Privileges'='ScanError' }
 
 Write-Host 'CSV File imported. Scanning detected binaries:'
 $BinaryScanResults=@{} #overall result set produced from scanning all unique deduplicated binaries found in $NetConnectionObjects
@@ -76,10 +76,10 @@ ForEach ( $ProcessToScan in $ProcessesByPid.values ) #use the PID as the uniqe-i
 		catch { Write-Warning -Message ( 'Unable to open file "{0}" for scanning.' -f @($EXEPath)) }
 		if ($FileToHash)  #if we couldn't open the file there's no point in attempting the following
 		{
-			$FileResults.SHA512=[System.BitConverter]::ToString($($SHA512Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower(); $FileToHash.Position=0; #compute the sha512 hash, rewind stream
-			$FileResults.SHA256=[System.BitConverter]::ToString($($SHA256Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower(); $FileToHash.Position=0; #compute the sha256 hash, rewind stream
-			$FileResults.SHA1  =[System.BitConverter]::ToString(  $($SHA1Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower(); $FileToHash.Position=0; #compute the sha1   hash, rewind stream
-			$FileResults.MD5   =[System.BitConverter]::ToString(   $($MD5Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower();                         #compute the md5    hash
+			$FileResults.SumSHA512=[System.BitConverter]::ToString($($SHA512Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower(); $FileToHash.Position=0; #compute the sha512 hash, rewind stream
+			$FileResults.SumSHA256=[System.BitConverter]::ToString($($SHA256Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower(); $FileToHash.Position=0; #compute the sha256 hash, rewind stream
+			$FileResults.SumSHA1  =[System.BitConverter]::ToString(  $($SHA1Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower(); $FileToHash.Position=0; #compute the sha1   hash, rewind stream
+			$FileResults.SumMD5   =[System.BitConverter]::ToString(   $($MD5Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower();                         #compute the md5    hash
 			$FileToHash.Dispose();
 			$FileToHash.Close();
 			try 
@@ -122,6 +122,10 @@ $OutputData[0] | Get-Member -MemberType Properties | SELECT -exp 'Name' | % { $T
 $SortedColumns | % { $TempCols.remove($_) } 	   #remove the set of known colums we want the file to start with from the set of all possible columns
 $BinaryScanError.Keys | % { $TempCols.remove($_) } #remove all the binary/exe security scan columns, from the set of all possible columns, so we can add them in at the end after the sort of the other columns
 $TempCols.GetEnumerator() | sort -Property name | % { $SortedColumns+=$($_.key).ToString() } #sort and dump the rest into (what will be the middle of) the array
+$BinaryScanError.remove('PrivilegeLevel')      #remove these two because they look better next to the columns above than mixed in with the other security scan info
+$BinaryScanError.remove('Privileges')
+$SortedColumns+='PrivilegeLevel'               #add to list of output columns here before we add the binary scan columns
+$SortedColumns+='Privileges'
 $BinaryScanError.GetEnumerator() | sort -Property name | % { $SortedColumns+=$($_.key).ToString() } #sort and then add in the binary/exe security scan columns at the end of the sorted set of columns
 
 $totalScanTime.Stop()
