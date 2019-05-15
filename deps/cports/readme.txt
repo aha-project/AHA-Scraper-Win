@@ -1,8 +1,8 @@
 
 
 
-CurrPorts v2.51
-Copyright (c) 2004 - 2018 Nir Sofer
+CurrPorts v2.55
+Copyright (c) 2004 - 2019 Nir Sofer
 Web site: http://www.nirsoft.net
 
 
@@ -28,6 +28,18 @@ information and icons)
 Versions History
 ================
 
+
+* Version 2.55:
+  o Added /CaptureTime command-line option, which allows you to
+    capture ports information from command-line for the specified number
+    of milliseconds, instead of taking a single snapshot.
+  o For example: cports.exe /scomma c:\temp\ports1.csv /CaptureTime
+    10000
+  o Be aware that you must run cports.exe as administrator in order
+    to get the Sent/Receive bytes information with the /CaptureTime
+    command-line option.
+  o Added /RunAsAdmin command-line option, for running CurrPorts as
+    administrator from command-line.
 
 * Version 2.51:
   o Added 'Creation Timestamp' column, which displays the date/time
@@ -604,6 +616,15 @@ Save the list of all opened TCP/UDP ports into HTML file (Vertical).
 
 /sxml <Filename>
 Save the list of all opened TCP/UDP ports to XML file.
+
+/CaptureTime <Milliseconds>
+Specifies the capture time in milliseconds for the save command-line
+options (/stext, /stab, /scomma, and so on...)
+Example:
+cports.exe /RunAsAdmin /scomma c:\temp\ports1.csv /CaptureTime 15000
+
+/RunAsAdmin
+Runs CurrPorts as Administrator.
 
 /sort <column>
 This command-line option can be used with other save options for sorting
