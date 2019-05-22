@@ -15,13 +15,14 @@ function Get-NewPids
 
 function Get-NetConnections
 {
-	.\deps\cports\cports.exe /cfg .\cports.cfg /scomma $NetConnectionsFile /CaptureTime 5000 /RunAsAdmin   #call cports and ask for a CSV. BTW if the .cfg file for cports is not present, this will break, because we need the CSV column headrs option set
+	Write-Host ('Starting currports scan for {0} milliseconds...' -f @($SecondsToScan))
+	.\deps\cports\cports.exe /cfg .\cports.cfg /scomma $NetConnectionsFile /CaptureTime $SecondsToScan /RunAsAdmin   #call cports and ask for a CSV. BTW if the .cfg file for cports is not present, this will break, because we need the CSV column headrs option set
 }
 
 function Get-Handles
 {
 	if ( !(Test-Path $HandleEXEPath) )  { Write-Host 'User has not installed "Handle" from SysInternals suite to "deps\handle\", skipping.'; return }
-	Write-Host ('Waiting for handle to output file...') #TODO handle case where handle 64 vs 32bit (only 64 right now)!
+	Write-Host ('Scanning for handles...') #TODO handle case where handle 64 vs 32bit (only 64 right now)!
 	& $HandleEXEPath -a > $HandleFile 
 }
 
@@ -242,6 +243,7 @@ function Write-Output
 $NetConnectionsFile='.\NetConnections.csv'         
 $BinaryAnalysisFile='.\BinaryAnalysis.csv'
 $HandleFile='handles.output'
+$SecondsToScan=5000      #default scan length, adds a little extra data, but not a lot of extra time to the scan length
 
 $SHA512Alg=new-object -type System.Security.Cryptography.SHA512Managed                 #Algorithms for doing various file hash operations
 $SHA256Alg=new-object -type System.Security.Cryptography.SHA256Managed
