@@ -73,7 +73,7 @@ function GetHandles
 	Write-Host ('Scanning for new pipes...')
 	try { if ( Test-Path $HandleFile ) { Remove-Item $HandleFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
 	catch { Write-Warning ('Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($HandleFile,$Error[0])) }
-	& $HandleEXEPath -a > $HandleFile 
+	& $HandleEXEPath -a -accepteula > $HandleFile 
 
 	while($true) #unlikely we need this anymore but leave here to test
 	{
