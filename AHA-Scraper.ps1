@@ -1,32 +1,33 @@
+param([uint32]$SecondsToScan=5)
+
 Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1               #import the Get-PESecurity powershell module
 . .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1              #dot source the Get-PESecurity powershell module
-$AHAScraperVersion='v0.8.6b3'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.6b4'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 
-function Get-NewPids
+function GetNewPids
 {
+	Write-Host ('Scanning for new processes...')
 	Get-Process | Sort-Object -Property Id | ForEach-Object {
-		$ResultRecord=@{}
-		$ResultRecord.PID=[string]$_.Id;
-		$ResultRecord.ProcessName=$_.ProcessName+'.exe'
-		$ResultRecord.ProcessPath=$_.Path
-		$PIDToPath.Add( [string]$_.Id, $ResultRecord ) #basically all the other hashtables in here are indexed by string, make this consistent
+		if (!$PIDToPath[([string]$_.Id)]) 
+		{
+			$ResultRecord=@{}
+			$ResultRecord.PID=[string]$_.Id;
+			$ResultRecord.ProcessName=$_.ProcessName+'.exe'
+			$ResultRecord.ProcessPath=$_.Path
+			$PIDToPath.Add( [string]$_.Id, $ResultRecord ) #basically all the other hashtables in here are indexed by string, make this consistent
+			if ($ResultRecord.ProcessPath) { Get-BinaryScanForPID $ResultRecord.PID $ResultRecord.ProcessPath }
+		}
 	}
 }
 
-function Get-NetConnections
+function GetNetConnections
 {
+	$MillisecondsToScan=$SecondsToScan*1000
 	Write-Host ('Starting currports scan for {0} milliseconds...' -f @($MillisecondsToScan))
 	.\deps\cports\cports.exe /cfg .\cports.cfg /scomma $NetConnectionsFile /CaptureTime $MillisecondsToScan /RunAsAdmin   #call cports and ask for a CSV. BTW if the .cfg file for cports is not present, this will break, because we need the CSV column headrs option set
 }
 
-function Get-Handles
-{
-	if ( !(Test-Path $HandleEXEPath) )  { Write-Host 'User has not installed "Handle" from SysInternals suite to "deps\handle\", skipping.'; return }
-	Write-Host ('Scanning for handles...') #TODO handle case where handle 64 vs 32bit (only 64 right now)!
-	& $HandleEXEPath -a > $HandleFile 
-}
-
-function Get-ScanNetconnections
+function ScanNetconnections
 {
 	while($true)
 	{
@@ -38,7 +39,9 @@ function Get-ScanNetconnections
 		catch { Write-Warning ( 'Unable to open input file. Probably fine, we will try again soon. Error:' -f @($Error[0])) }
 		Start-Sleep 1 #sleep for 1s while we wait for file
 	}
+	Write-Host ('Finalizing NetConnections data...')
 	$NetConnectionObjects=$(import-csv -path $NetConnectionsFile -delimiter ',')  #import the csv from currports
+
 	foreach ($CSVLine in $NetConnectionObjects) #turn each line of the imported csv data into a hashtable, also clean up some input data at the same time
 	{
 		$ResultRecord=@{}
@@ -60,13 +63,19 @@ function Get-ScanNetconnections
 	}
 }
 
-function Get-ScanHandles
+function GetHandles
 {
-	while($true)
+	if ( !(Test-Path $HandleEXEPath) )  { Write-Host 'User has not installed "Handle" from SysInternals suite to "deps\handle\", skipping.'; return }
+	Write-Host ('Scanning for new pipes...')
+	try { if ( Test-Path $HandleFile ) { Remove-Item $HandleFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
+	catch { Write-Warning 'Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($HandleFile,$Error[0])}
+	& $HandleEXEPath -a > $HandleFile 
+
+	while($true) #unlikely we need this anymore but leave here to test
 	{
 		try 
 		{ 
-			if ( Test-Path $HandleFile ) { Get-Content $HandleFile -Wait -EA Stop | Select-String 'Process' | ForEach-Object { Write-Host 'Handle file generated.'; break } }
+			if ( Test-Path $HandleFile ) { Get-Content $HandleFile -Wait -EA Stop | Select-String 'Process' | ForEach-Object { break } }
 		} #attempt to read in a 1s loop until the file shows up
 		catch { Write-Warning ( 'Unable to open input file. Probably fine, we will try again soon. Error:' -f @($Error[0])) }
 		Write-Host ('Waiting for handle to output file...')
@@ -85,83 +94,86 @@ function Get-ScanHandles
 			$PipePath=$PipePathTokens[1]
 			$CurProcTokens=$CurrentExecutable.split()
 			if (!$CurProcTokens[0] -or !$CurProcTokens[2] -or !$PipePath) { continue; }
-			
 			$HandlePID=$CurProcTokens[2];
-			$ResultRecord=@{}
-			if ($ProcessesByPid[$HandlePID]) #we have seen this pid before
-			{
-				$PidProcess=$ProcessesByPid[$HandlePID]
-				$PidProcess.Keys | ForEach-Object { $ResultRecord[$_]=$PidProcess[$_] }
-				#$ResultRecord=$ProcessesByPid[$HandlePID].Clone()
-				$ResultRecord.LocalPort=''
-				$ResultRecord.RemotePort=''
-				$ResultRecord.RemoteHostName=''
-				$ResultRecord.State=''
-				$ResultRecord.LocalAddress=''
-				$ResultRecord.RemoteAddress=''
-			}
-			else {
-				Write-Host 'Found a pipe only proc' $HandlePID $CurProcTokens[0]
-				#$ResultRecord=$BlankHandleResult.Clone()
-				$BlankHandleResult.Keys | ForEach-Object { $ResultRecord[$_]=$BlankHandleResult[$_] }
-				$ResultRecord.PID=$HandlePID
-				$PidRecord=$PIDToPath[$ResultRecord.PID]
-				if (!$PidRecord) { Write-Warning "failed to locate a pid record for pid $HandlePID" }
-				$ResultRecord.ProcessPath=$PidRecord.ProcessPath
-				$ResultRecord.ProcessName=$PidRecord.ProcessName
-				
-				if (!$($PidRecord.ProcessPath)) { Write-Warning "No path info for $HandlePID $PidRecord.ProcessName"  }
-			}
-			
-			if (!$UniquePipeNumber[$PipePath]) { $UniquePipeNumber[$PipePath]=$PipeCounter++ }
-
-			$ResultRecord.Protocol='pipe'
-			$ResultRecord.State='Established'
-			$ResultRecord.LocalAddress=$PipePath
-			$ResultRecord.RemoteAddress=$PipePath
-			$ResultRecord.LocalPort=$UniquePipeNumber[$PipePath]
-			$ResultRecord.RemotePort=$UniquePipeNumber[$PipePath]
-
-			$ResultRecord.AHAScraperVersion=$AHAScraperVersion  #add the scraper version
-			$ResultRecord.AHARuntimeEnvironment=$OurEnvInfo     #add the runtime info
-		
-			
-			if (!$ProcessesByPid[$ResultRecord.PID]) { $ProcessesByPid[$ResultRecord.PID]=$ResultRecord } #used for looking up an example of a process via a pid (if one exists, ignore, since there will be more info in an example from cports)
+			$PartialResult=@{}
+			$PartialResult.PID=$HandlePID
+			$PartialResult.PipePath=$PipePath
 
 			$Found=$false
-			foreach ( $tempInfo in $WorkingData )
+			foreach ( $tempInfo in $PartialPipeResults )
 			{
-				if ($tempInfo.PID -eq $ResultRecord.PID -and $tempInfo.Protocol -eq $ResultRecord.Protocol -and $tempInfo.LocalAddress -eq $ResultRecord.LocalAddress )
+				if ($tempInfo.PID -eq $PartialResult.PID -and $tempInfo.PipePath -eq $PartialResult.PipePath )
 				{
 					$Found=$true
 					break
 				}
 			}
+			if (!$Found) { $PartialPipeResults.add( $PartialResult ) | Out-Null }
 
-			$PidAsNum=$ResultRecord.PID -as [int]
+			$PidAsNum=$HandlePID -as [int]
 			if ($PipeToPidMap[$PipePath])
 			{
 				if ($PipeToPidMap[$PipePath[1]] -gt $PidAsNum) { $PipeToPidMap[$PipePath]=$PidAsNum }
 			}
 			else { $PipeToPidMap[$PipePath]=$PidAsNum }
-
-			#if (!$Found) { write-host $ResultRecord.PID $ResultRecord.ProcessPath $ResultRecord.ProcessName $ResultRecord.Protocol $ResultRecord.LocalAddress $ResultRecord.RemoteAddress }
-			if (!$Found) { $WorkingData.Add($ResultRecord) | Out-Null } #store this working data to the internal representation datastore
 		}
 	}
+	try { if ( Test-Path $HandleFile ) { Remove-Item $HandleFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
+	catch { Write-Warning 'Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($HandleFile,$Error[0])}
+}
 
-	foreach ( $tempResult in $WorkingData )
+function ScanHandles
+{
+	Write-Host 'Finalizing handle data...'
+	foreach ($HandleLine in $PartialPipeResults) #turn each line of the imported data into a hashtable
 	{
-		$LowestPipePid=[string] $PipeToPidMap[$tempResult.LocalAddress]
-		if ( $tempResult.Protocol -eq 'pipe' -and $tempResult.PID -eq $LowestPipePid ) #change both of these 'LocalPort' to 'LocalAddress' if things go back that way
+		$HandlePID=$HandleLine.PID
+		$PipePath=$HandleLine.PipePath
+		$ResultRecord=@{}
+		# Write-Host "debug: handlepid $HandlePID pipepath $PipePath"
+		if ($ProcessesByPid[$HandlePID]) #we have seen this pid before
 		{
-			#Write-Host 'marking' $tempResult.PID 'as listening for pipe' $tempResult.LocalAddress 
-			$tempResult.State='Listening'
+			$PidProcess=$ProcessesByPid[$HandlePID]
+			$PidProcess.Keys | ForEach-Object { $ResultRecord[$_]=$PidProcess[$_] }
+			$ResultRecord.LocalPort=''
+			$ResultRecord.RemotePort=''
+			$ResultRecord.RemoteHostName=''
+			$ResultRecord.State=''
+			$ResultRecord.LocalAddress=''
+			$ResultRecord.RemoteAddress=''
 		}
+		else 
+		{
+			# Write-Host ('Found a pipe only proc {0}' -f @($HandlePID))
+			$BlankHandleResult.Keys | ForEach-Object { $ResultRecord[$_]=$BlankHandleResult[$_] }
+			$ResultRecord.PID=$HandlePID
+			$PidRecord=$PIDToPath[$ResultRecord.PID]
+			if (!$PidRecord) { Write-Warning "failed to locate a pid record for pid $HandlePID" }
+			$ResultRecord.ProcessPath=$PidRecord.ProcessPath
+			$ResultRecord.ProcessName=$PidRecord.ProcessName
+			if (!$($PidRecord.ProcessPath)) { Write-Warning "No path info for $HandlePID $PidRecord.ProcessName"  }
+		}
+		
+		if (!$UniquePipeNumber[$PipePath]) { $UniquePipeNumber[$PipePath]=$PipeCounter++ }
+		$ResultRecord.Protocol='pipe'
+		$ResultRecord.State='Established'
+		$ResultRecord.LocalAddress=$PipePath
+		$ResultRecord.RemoteAddress=$PipePath
+		$ResultRecord.LocalPort=$UniquePipeNumber[$PipePath]
+		$ResultRecord.RemotePort=$UniquePipeNumber[$PipePath]
+		$ResultRecord.AHAScraperVersion=$AHAScraperVersion  #add the scraper version
+		$ResultRecord.AHARuntimeEnvironment=$OurEnvInfo     #add the runtime info
+	
+		if (!$ProcessesByPid[$ResultRecord.PID]) { $ProcessesByPid[$ResultRecord.PID]=$ResultRecord } #used for looking up an example of a process via a pid (if one exists, ignore, since there will be more info in an example from cports)
+
+		$LowestPipePid=[string] $PipeToPidMap[$PipePath]
+		if ($ResultRecord.PID -eq $LowestPipePid) { $ResultRecord.State='Listening' }
+		if (!$Found) { $WorkingData.Add($ResultRecord) | Out-Null } #store this working data to the internal representation datastore
+		
 	}
 }
 
-function Get-BinaryScan
+function Get-BinaryScanForPID
 {
 	param([string]$ProcessID, [string]$EXEPath)
 	try
@@ -210,6 +222,7 @@ function Get-BinaryScan
 
 function Write-Output
 {
+	Write-Host ('Writing results...')
 	foreach ($ResultRecord in $WorkingData)
 	{
 		try
@@ -243,7 +256,7 @@ function Write-Output
 $NetConnectionsFile='.\NetConnections.csv'         
 $BinaryAnalysisFile='.\BinaryAnalysis.csv'
 $HandleFile='handles.output'
-$MillisecondsToScan=5000      #default scan length, adds a little extra data, but not a lot of extra time to the scan length
+#$SecondsToScan=5000      #default scan length, adds a little extra data, but not a lot of extra time to the scan length
 
 $SHA512Alg=new-object -type System.Security.Cryptography.SHA512Managed                 #Algorithms for doing various file hash operations
 $SHA256Alg=new-object -type System.Security.Cryptography.SHA256Managed
@@ -254,6 +267,7 @@ $BinaryScanError=@{ 'ARCH'='ScanError';'ASLR'='ScanError';'DEP'='ScanError';'Aut
 $BlankHandleResult=@{ 'ProcessName'='';'PID'='';'Protocol'='';'LocalPort'='';'LocalPortName'='';'LocalAddress'='';'RemotePort'='';'RemotePortName'='';'RemoteAddress'='';'RemoteHostName'='';'State'='';'SentBytes'='';'ReceivedBytes'='';'SentPackets'='';'ReceivedPackets'='';'ProcessPath'='';'ProductName'='';'FileDescription'='';'FileVersion'='';'Company'='';'ProcessCreatedOn'='';'UserName'='';'ProcessServices'='';'ProcessAttributes'='';'AddedOn'='';'CreationTimestamp'='';'ModuleFilename'='';'RemoteIPCountry'=''; }
 $PipeCounter=[int]1; #shared counter so we can assign a unique number to each pipe
 [System.Collections.ArrayList]$WorkingData=New-Object System.Collections.ArrayList($null) #create empty array list for our working dataset
+[System.Collections.ArrayList]$PartialPipeResults=New-Object System.Collections.ArrayList($null) #create empty array list for our working dataset
 [System.Collections.ArrayList]$OutputData=New-Object System.Collections.ArrayList($null)  #create empty array list for final output dataset
 
 #lookup tables
@@ -268,8 +282,7 @@ try { if ( Test-Path $NetConnectionsFile ) { Remove-Item $NetConnectionsFile } }
 catch { Write-Warning 'Unable to delete "{0}", there may be a permissions issue. Error: {1}' -f @($NetConnectionsFile,$Error[0])}
 try { if ( Test-Path $BinaryAnalysisFile ) { Clear-Content $BinaryAnalysisFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
 catch { Write-Warning 'Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($BinaryAnalysisFile,$Error[0])}
-try { if ( Test-Path $HandleFile ) { Clear-Content $HandleFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
-catch { Write-Warning 'Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($HandleFile,$Error[0])}
+
 
 $TempInfo=(Get-WmiObject win32_operatingsystem)
 $OurEnvInfo='PowerShell {0} on {1} {2}' -f @($PSVersionTable.PSVersion.ToString().trim(),$TempInfo.caption.toString().trim(),$TempInfo.OSArchitecture.ToString().trim())
@@ -280,25 +293,25 @@ if ( $TempInfo.OSArchitecture.ToString().trim() -contains '64' ) { $HandleEXEPat
 
 $totalScanTime=[Diagnostics.Stopwatch]::StartNew()
 
-Get-NewPids
-Get-NetConnections
-Get-Handles
+GetNetConnections
+GetHandles
+GetNewPids
 
-Write-Host ('Importing "{0}"...' -f @($NetConnectionsFile))
-Get-ScanNetconnections
-Get-ScanHandles
-Write-Host 'CSV File imported. Scanning detected binaries:'
+GetHandles
+GetNewPids
+
+GetHandles
+GetNewPids
+
+ScanNetconnections
+ScanHandles
+
+
 ForEach ( $ProcessToScan in $ProcessesByPid.values ) #use the PID as the uniqe-ifier here since a single .exe can be launched by multiple users
 {
-	Get-BinaryScan $ProcessToScan.PID $ProcessToScan.ProcessPath
+	Get-BinaryScanForPID $ProcessToScan.PID $ProcessToScan.ProcessPath
 }
-ForEach ( $ProcessToScan in $PIDToPath.values ) #also check the results from ps to see what we've missed
-{
-	if ($ProcessToScan.ProcessPath)
-	{
-		Get-BinaryScan $ProcessToScan.PID $ProcessToScan.ProcessPath
-	}
-}
+
 Write-Output
 
 $totalScanTime.Stop()
