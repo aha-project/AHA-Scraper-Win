@@ -2,7 +2,7 @@ param([uint32]$SecondsToScan=5)
 
 Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1               #import the Get-PESecurity powershell module
 . .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1              #dot source the Get-PESecurity powershell module
-$AHAScraperVersion='v0.8.6b4'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.6b5'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 
 function GetNewPids
 {
@@ -22,6 +22,8 @@ function GetNewPids
 
 function GetNetConnections
 {
+	try { if ( Test-Path $NetConnectionsFile ) { Remove-Item $NetConnectionsFile } } #delete the old input csv file from last run, if exists, or we will end up with weird results (because this script will start reading while cports is writing over the old file)
+	catch { Write-Warning -Message ('Unable to delete "{0}", there may be a permissions issue. Error: {1}' -f @($NetConnectionsFile,$Error[0]))}
 	$MillisecondsToScan=$SecondsToScan*1000
 	Write-Host ('Starting currports scan for {0} milliseconds...' -f @($MillisecondsToScan))
 	.\deps\cports\cports.exe /cfg .\cports.cfg /scomma $NetConnectionsFile /CaptureTime $MillisecondsToScan /RunAsAdmin   #call cports and ask for a CSV. BTW if the .cfg file for cports is not present, this will break, because we need the CSV column headrs option set
@@ -36,7 +38,7 @@ function ScanNetconnections
 		{ 
 			if ( Test-Path $NetConnectionsFile ) { Get-Content $NetConnectionsFile -Wait -EA Stop | Select-String 'Process' | ForEach-Object { Write-Host 'NetConnections file generated.'; break } }
 		} #attempt to read in a 1s loop until the file shows up
-		catch { Write-Warning ( 'Unable to open input file. Probably fine, we will try again soon. Error:' -f @($Error[0])) }
+		catch { Write-Warning -Message( 'Unable to open input file. We will try again soon. Error:' -f @($Error[0])) }
 		Start-Sleep 1 #sleep for 1s while we wait for file
 	}
 	Write-Host ('Finalizing NetConnections data...')
@@ -60,15 +62,17 @@ function ScanNetconnections
 		$ResultRecord.remove('WindowTitle')					#ignore useless column 'WindowTitle'
 		$ProcessesByPid[$ResultRecord.PID]=$ResultRecord  #used for looking up an example of a process via a pid
 		$WorkingData.Add($ResultRecord) | Out-Null #store this working data to the internal representation datastore
+		if ($ResultRecord.ProcessPath) { Get-BinaryScanForPID $ResultRecord.PID $ResultRecord.ProcessPath }
 	}
 }
 
 function GetHandles
 {
-	if ( !(Test-Path $HandleEXEPath) )  { Write-Host 'User has not installed "Handle" from SysInternals suite to "deps\handle\", skipping.'; return }
+	$HandleFile='handles.output'
+	if ( !(Test-Path $HandleEXEPath) )  { Write-Host ('User has not installed "Handle" from SysInternals suite to "deps\handle\", skipping.'); return }
 	Write-Host ('Scanning for new pipes...')
 	try { if ( Test-Path $HandleFile ) { Remove-Item $HandleFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
-	catch { Write-Warning 'Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($HandleFile,$Error[0])}
+	catch { Write-Warning ('Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($HandleFile,$Error[0])) }
 	& $HandleEXEPath -a > $HandleFile 
 
 	while($true) #unlikely we need this anymore but leave here to test
@@ -77,7 +81,7 @@ function GetHandles
 		{ 
 			if ( Test-Path $HandleFile ) { Get-Content $HandleFile -Wait -EA Stop | Select-String 'Process' | ForEach-Object { break } }
 		} #attempt to read in a 1s loop until the file shows up
-		catch { Write-Warning ( 'Unable to open input file. Probably fine, we will try again soon. Error:' -f @($Error[0])) }
+		catch { Write-Warning -Message ('Unable to open input file. We will try again soon. Error:' -f @($Error[0])) }
 		Write-Host ('Waiting for handle to output file...')
 		Start-Sleep 1 #sleep for 1s while we wait for file
 	}
@@ -87,7 +91,7 @@ function GetHandles
 	{
 		$HandleLine=$HandleLine.Trim()
 		if ( $HandleLine -lt 4) { continue; }
-		if ( $HandleLine -like '* pid: *' ) { $CurrentExecutable=$HandleLine; }  #write-host found pid $HandleLine}
+		if ( $HandleLine -like '* pid: *' ) { $CurrentExecutable=$HandleLine; }
 		if ( $HandleLine -like '*\Device\NamedPipe\*' ) 
 		{ 
 			$PipePathTokens=$HandleLine -split '\\Device\\NamedPipe\\'
@@ -119,18 +123,18 @@ function GetHandles
 		}
 	}
 	try { if ( Test-Path $HandleFile ) { Remove-Item $HandleFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
-	catch { Write-Warning 'Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($HandleFile,$Error[0])}
+	catch { Write-Warning ('Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($HandleFile,$Error[0])) }
 }
 
 function ScanHandles
 {
-	Write-Host 'Finalizing handle data...'
+	Write-Host ('Finalizing handle data...')
 	foreach ($HandleLine in $PartialPipeResults) #turn each line of the imported data into a hashtable
 	{
 		$HandlePID=$HandleLine.PID
 		$PipePath=$HandleLine.PipePath
 		$ResultRecord=@{}
-		# Write-Host "debug: handlepid $HandlePID pipepath $PipePath"
+
 		if ($ProcessesByPid[$HandlePID]) #we have seen this pid before
 		{
 			$PidProcess=$ProcessesByPid[$HandlePID]
@@ -143,15 +147,14 @@ function ScanHandles
 			$ResultRecord.RemoteAddress=''
 		}
 		else 
-		{
-			# Write-Host ('Found a pipe only proc {0}' -f @($HandlePID))
+		{ # Write-Host ('Found a pipe only proc {0}' -f @($HandlePID))
 			$BlankHandleResult.Keys | ForEach-Object { $ResultRecord[$_]=$BlankHandleResult[$_] }
 			$ResultRecord.PID=$HandlePID
 			$PidRecord=$PIDToPath[$ResultRecord.PID]
-			if (!$PidRecord) { Write-Warning "failed to locate a pid record for pid $HandlePID" }
+			if (!$PidRecord) { Write-Warning -Message ('failed to locate a pid record for pid {0}' -f @($HandlePID)) }
 			$ResultRecord.ProcessPath=$PidRecord.ProcessPath
 			$ResultRecord.ProcessName=$PidRecord.ProcessName
-			if (!$($PidRecord.ProcessPath)) { Write-Warning "No path info for $HandlePID $PidRecord.ProcessName"  }
+			if (!$($PidRecord.ProcessPath)) { Write-Warning -Message ('No path info for {0} {1}' -f @($HandlePID,$PidRecord.ProcessName)) }
 		}
 		
 		if (!$UniquePipeNumber[$PipePath]) { $UniquePipeNumber[$PipePath]=$PipeCounter++ }
@@ -187,7 +190,7 @@ function Get-BinaryScanForPID
 			$BinaryScanError.Keys | ForEach-Object { $EXEResults[$_]=$BinaryScanError[$_] } #fill in placeholder values to fill in all known fields with 'ScanError' in case they are not populated by any of the scans
 			$FileToHash=$null
 			try { $FileToHash=[System.IO.File]::OpenRead($EXEPath) } #open file so we can hash the data
-			catch { Write-Warning -Message ( 'Unable to open file "{0}" for scanning.' -f @($EXEPath)) }
+			catch { Write-Warning -Message ('Unable to open file "{0}" for scanning.' -f @($EXEPath)) }
 			if ($FileToHash)  #if we couldn't open the file there's no point in attempting the following
 			{
 				Write-Host ('Scanning ProcessID={0} "{1}"...' -f @($ProcessID,$EXEPath))
@@ -202,7 +205,7 @@ function Get-BinaryScanForPID
 					$Temp=Get-PESecurity -File $EXEPath -EA SilentlyContinue
 					$Temp | Get-Member -MemberType Properties | ForEach-Object { $EXEResults[$_.Name]=$Temp[$_.Name] } #copy over what we got from PESecurity
 				}
-				catch { Write-Warning ('PESecurity: Unable to scan file. Error: {0}' -f @($Error[0])) }
+				catch { Write-Warning -Message ('PESecurity: Unable to scan file. Error: {0}' -f @($Error[0])) }
 				$EXEResults.remove('FileName')  #remove unnecessary result from Get-PESecurity
 				$BinaryScanResultsByPath[$EXEPath]=$EXEResults
 			}
@@ -232,7 +235,7 @@ function Write-Output
 			if (!$ScanResult) { $ScanResult=$BinaryScanError }                              #if we cant find a result for this EXEPath, we'll use the default set of errors
 			$ScanResult.Keys | ForEach-Object { $ResultRecord[$_]=$ScanResult[$_] }                      #copy the results for the binary into this line of the output
 		}
-		catch { Write-Warning ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
+		catch { Write-Warning -Message ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
 		$OutputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null # TODO:I don't recall entirely why we have to make it a PSObject for export-csv to like it...something to look into in the future I suppose
 	}
 
@@ -253,10 +256,11 @@ function Write-Output
 }
 
 
+
+#Entry point into script is here (everything above should be function or param definitions)
+
 $NetConnectionsFile='.\NetConnections.csv'         
 $BinaryAnalysisFile='.\BinaryAnalysis.csv'
-$HandleFile='handles.output'
-#$SecondsToScan=5000      #default scan length, adds a little extra data, but not a lot of extra time to the scan length
 
 $SHA512Alg=new-object -type System.Security.Cryptography.SHA512Managed                 #Algorithms for doing various file hash operations
 $SHA256Alg=new-object -type System.Security.Cryptography.SHA256Managed
@@ -278,10 +282,8 @@ $ProcessesByPid=@{}
 $PipeToPidMap=@{}
 $UniquePipeNumber=@{}
 
-try { if ( Test-Path $NetConnectionsFile ) { Remove-Item $NetConnectionsFile } } #delete the old input csv file from last run, if exists, or we will end up with weird results (because this script will start reading while cports is writing over the old file)
-catch { Write-Warning 'Unable to delete "{0}", there may be a permissions issue. Error: {1}' -f @($NetConnectionsFile,$Error[0])}
 try { if ( Test-Path $BinaryAnalysisFile ) { Clear-Content $BinaryAnalysisFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
-catch { Write-Warning 'Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($BinaryAnalysisFile,$Error[0])}
+catch { Write-Warning ('Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($BinaryAnalysisFile,$Error[0])) }
 
 
 $TempInfo=(Get-WmiObject win32_operatingsystem)
@@ -291,26 +293,21 @@ $HandleEXEPath='.\deps\handle\handle.exe'
 if ( $TempInfo.OSArchitecture.ToString().trim() -contains '64' ) { $HandleEXEPath='.\deps\handle\handle64.exe' }
 
 
+GetNetConnections
 $totalScanTime=[Diagnostics.Stopwatch]::StartNew()
 
-GetNetConnections
-GetHandles
-GetNewPids
-
-GetHandles
-GetNewPids
-
-GetHandles
-GetNewPids
-
-ScanNetconnections
-ScanHandles
-
-
-ForEach ( $ProcessToScan in $ProcessesByPid.values ) #use the PID as the uniqe-ifier here since a single .exe can be launched by multiple users
+while ($true)
 {
-	Get-BinaryScanForPID $ProcessToScan.PID $ProcessToScan.ProcessPath
+	GetHandles
+	GetNewPids
+	$Elapsed=$totalScanTime.Elapsed.TotalSeconds -as [uint32]
+	if  ( $Elapsed -gt $SecondsToScan ) {break;}
+	Write-Host ('Continuing subscans, {0} seconds have elapsed of time budget {1} seconds' -f @($Elapsed,$SecondsToScan))
 }
+
+Write-Host ('Scan over time complete, finalizing results.')
+ScanNetconnections
+ScanHandles #always finalize handles after netconnections, since netconenctions will populate more pid fields we can use
 
 Write-Output
 
