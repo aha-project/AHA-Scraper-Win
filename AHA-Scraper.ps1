@@ -290,7 +290,7 @@ $TempInfo=(Get-WmiObject win32_operatingsystem)
 $OurEnvInfo='PowerShell {0} on {1} {2}' -f @($PSVersionTable.PSVersion.ToString().trim(),$TempInfo.caption.toString().trim(),$TempInfo.OSArchitecture.ToString().trim())
 Write-Host ('AHA-Scraper {0} starting in {1}' -f @($AHAScraperVersion,$OurEnvInfo))
 $HandleEXEPath='.\deps\handle\handle.exe'
-if ( $TempInfo.OSArchitecture.ToString().trim() -contains '64' ) { $HandleEXEPath='.\deps\handle\handle64.exe' }
+if ( $TempInfo.OSArchitecture.ToString().trim() -like '*64*' ) { Write-host ('64-bit machine detected, will attempt to use handle64.exe for pipe scans.');$HandleEXEPath='.\deps\handle\handle64.exe' }
 
 
 GetNetConnections
