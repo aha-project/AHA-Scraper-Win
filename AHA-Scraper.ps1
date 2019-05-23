@@ -57,8 +57,8 @@ function ScanNetconnections
 		$ResultRecord.FileDescription=$ResultRecord.FileDescription -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
 		$ResultRecord.FileVersion=$ResultRecord.FileVersion -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
 		$ResultRecord.Company=$ResultRecord.Company -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
-		$ResultRecord.AHAScraperVersion=$AHAScraperVersion  #add the scraper version
-		$ResultRecord.AHARuntimeEnvironment=$OurEnvInfo     #add the runtime info
+		# $ResultRecord.AHAScraperVersion=$AHAScraperVersion  #add the scraper version
+		# $ResultRecord.AHARuntimeEnvironment=$OurEnvInfo     #add the runtime info
 		$ResultRecord.remove('WindowTitle')					#ignore useless column 'WindowTitle'
 		$ProcessesByPid[$ResultRecord.PID]=$ResultRecord  #used for looking up an example of a process via a pid
 		$WorkingData.Add($ResultRecord) | Out-Null #store this working data to the internal representation datastore
@@ -164,8 +164,8 @@ function ScanHandles
 		$ResultRecord.RemoteAddress=$PipePath
 		$ResultRecord.LocalPort=$UniquePipeNumber[$PipePath]
 		$ResultRecord.RemotePort=$UniquePipeNumber[$PipePath]
-		$ResultRecord.AHAScraperVersion=$AHAScraperVersion  #add the scraper version
-		$ResultRecord.AHARuntimeEnvironment=$OurEnvInfo     #add the runtime info
+		# $ResultRecord.AHAScraperVersion=$AHAScraperVersion  #add the scraper version
+		# $ResultRecord.AHARuntimeEnvironment=$OurEnvInfo     #add the runtime info
 	
 		if (!$ProcessesByPid[$ResultRecord.PID]) { $ProcessesByPid[$ResultRecord.PID]=$ResultRecord } #used for looking up an example of a process via a pid (if one exists, ignore, since there will be more info in an example from cports)
 
@@ -226,6 +226,11 @@ function Get-BinaryScanForPID
 function Write-Output
 {
 	Write-Host ('Writing results...')
+	$PIDsLeft=@{}
+	$PIDToPath.keys | ForEach-Object { $PIDSleft[$_]=$PIDToPath[$_] }
+	# $count=[int]0
+	# $PIDsLeft.Keys | ForEach-Object { $count++ }
+	# Write-Host $count
 	foreach ($ResultRecord in $WorkingData)
 	{
 		try
@@ -234,9 +239,37 @@ function Write-Output
 			if ($($ResultRecord.PID)) { $ScanResult=$($BinaryScanResultsByPID[$($ResultRecord.PID)]) }   #try to grab the correct result from dataset of scanned binaries
 			if (!$ScanResult) { $ScanResult=$BinaryScanError }                              #if we cant find a result for this EXEPath, we'll use the default set of errors
 			$ScanResult.Keys | ForEach-Object { $ResultRecord[$_]=$ScanResult[$_] }                      #copy the results for the binary into this line of the output
+			$PIDsLeft.Remove([string]$ResultRecord.PID)
 		}
 		catch { Write-Warning -Message ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
 		$OutputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null # TODO:I don't recall entirely why we have to make it a PSObject for export-csv to like it...something to look into in the future I suppose
+	}
+
+	# $count=[int]0
+	# $PIDsLeft.Keys | ForEach-Object { $count++ }
+	# Write-Host $count
+
+	foreach ($aPid in $PIDsLeft.keys)
+	{
+		$ResultRecord=@{}
+		$BlankHandleResult.keys | ForEach-Object { $ResultRecord[$_]=$BlankHandleResult[$_] }
+		$ResultRecord.PID=$aPid
+		
+		$PSRecord=$PIDsLeft[$aPid];
+	
+		if ($PSRecord.ProcessPath) { $ResultRecord.ProcessPath=$PSRecord.ProcessPath }
+		$ResultRecord.ProcessName=$PSRecord.ProcessName
+
+		try
+		{
+			$ScanResult=$null;
+			if ($aPid) { $ScanResult=$($BinaryScanResultsByPID[$aPid]) }   #try to grab the correct result from dataset of scanned binaries
+			if (!$ScanResult) { $ScanResult=$BinaryScanError }
+			$ScanResult.Keys | ForEach-Object { $ResultRecord[$_]=$ScanResult[$_] }
+		}
+		catch { Write-Warning -Message ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
+		$OutputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null # TODO:I don't recall entirely why we have to make it a PSObject for export-csv to like it...something to look into in the future I suppose
+
 	}
 
 	$TempCols=@{}
@@ -267,8 +300,14 @@ $SHA256Alg=new-object -type System.Security.Cryptography.SHA256Managed
 $SHA1Alg  =new-object -type System.Security.Cryptography.SHA1Managed
 $MD5Alg   =new-object -type System.Security.Cryptography.MD5CryptoServiceProvider
 
+$TempInfo=(Get-WmiObject win32_operatingsystem)
+$OurEnvInfo='PowerShell {0} on {1} {2}' -f @($PSVersionTable.PSVersion.ToString().trim(),$TempInfo.caption.toString().trim(),$TempInfo.OSArchitecture.ToString().trim())
+Write-Host ('AHA-Scraper {0} starting in {1}' -f @($AHAScraperVersion,$OurEnvInfo))
+$HandleEXEPath='.\deps\handle\handle.exe'
+if ( $TempInfo.OSArchitecture.ToString().trim() -like '*64*' ) { Write-host ('64-bit machine detected, will attempt to use handle64.exe for pipe scans.');$HandleEXEPath='.\deps\handle\handle64.exe' }
+
 $BinaryScanError=@{ 'ARCH'='ScanError';'ASLR'='ScanError';'DEP'='ScanError';'Authenticode'='ScanError';'StrongNaming'='ScanError';'SafeSEH'='ScanError';'ControlFlowGuard'='ScanError';'HighentropyVA'='ScanError';'DotNET'='ScanError';'SumSHA512'='ScanError';'SumSHA256'='ScanError';'SumSHA1'='ScanError';'SumMD5'='ScanError';'PrivilegeLevel'='ScanError';'Privileges'='ScanError' }
-$BlankHandleResult=@{ 'ProcessName'='';'PID'='';'Protocol'='';'LocalPort'='';'LocalPortName'='';'LocalAddress'='';'RemotePort'='';'RemotePortName'='';'RemoteAddress'='';'RemoteHostName'='';'State'='';'SentBytes'='';'ReceivedBytes'='';'SentPackets'='';'ReceivedPackets'='';'ProcessPath'='';'ProductName'='';'FileDescription'='';'FileVersion'='';'Company'='';'ProcessCreatedOn'='';'UserName'='';'ProcessServices'='';'ProcessAttributes'='';'AddedOn'='';'CreationTimestamp'='';'ModuleFilename'='';'RemoteIPCountry'=''; }
+$BlankHandleResult=@{ 'ProcessName'='';'PID'='';'Protocol'='';'LocalPort'='';'LocalPortName'='';'LocalAddress'='';'RemotePort'='';'RemotePortName'='';'RemoteAddress'='';'RemoteHostName'='';'State'='';'SentBytes'='';'ReceivedBytes'='';'SentPackets'='';'ReceivedPackets'='';'ProcessPath'='';'ProductName'='';'FileDescription'='';'FileVersion'='';'Company'='';'ProcessCreatedOn'='';'UserName'='';'ProcessServices'='';'ProcessAttributes'='';'AddedOn'='';'CreationTimestamp'='';'ModuleFilename'='';'RemoteIPCountry'='';'AHARuntimeEnvironment'=$OurEnvInfo;'AHAScraperVersion'=$AHAScraperVersion; }
 $PipeCounter=[int]1; #shared counter so we can assign a unique number to each pipe
 [System.Collections.ArrayList]$WorkingData=New-Object System.Collections.ArrayList($null) #create empty array list for our working dataset
 [System.Collections.ArrayList]$PartialPipeResults=New-Object System.Collections.ArrayList($null) #create empty array list for our working dataset
@@ -284,14 +323,6 @@ $UniquePipeNumber=@{}
 
 try { if ( Test-Path $BinaryAnalysisFile ) { Clear-Content $BinaryAnalysisFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
 catch { Write-Warning ('Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($BinaryAnalysisFile,$Error[0])) }
-
-
-$TempInfo=(Get-WmiObject win32_operatingsystem)
-$OurEnvInfo='PowerShell {0} on {1} {2}' -f @($PSVersionTable.PSVersion.ToString().trim(),$TempInfo.caption.toString().trim(),$TempInfo.OSArchitecture.ToString().trim())
-Write-Host ('AHA-Scraper {0} starting in {1}' -f @($AHAScraperVersion,$OurEnvInfo))
-$HandleEXEPath='.\deps\handle\handle.exe'
-if ( $TempInfo.OSArchitecture.ToString().trim() -like '*64*' ) { Write-host ('64-bit machine detected, will attempt to use handle64.exe for pipe scans.');$HandleEXEPath='.\deps\handle\handle64.exe' }
-
 
 GetNetConnections
 $totalScanTime=[Diagnostics.Stopwatch]::StartNew()
