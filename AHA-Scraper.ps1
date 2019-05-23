@@ -69,7 +69,7 @@ function ScanNetconnections
 function GetHandles
 {
 	$HandleFile='handles.output'
-	if ( !(Test-Path $HandleEXEPath) )  { Write-Host ('User has not installed "Handle" from SysInternals suite to "deps\handle\", skipping.'); return }
+	if ( !(Test-Path $HandleEXEPath) )  { Write-Host ('User has not installed "Handle" from SysInternals suite to {0}, skipping.' -f @($HandleEXEPath)); return }
 	Write-Host ('Scanning for new pipes...')
 	try { if ( Test-Path $HandleFile ) { Remove-Item $HandleFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
 	catch { Write-Warning ('Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($HandleFile,$Error[0])) }
