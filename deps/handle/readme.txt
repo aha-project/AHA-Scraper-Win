@@ -2,5 +2,5 @@ Put your copy of handle.exe or handle64.exe from the microsoft sysinternals suit
 
 You can download handle from microsoft here: https://docs.microsoft.com/en-us/sysinternals/downloads/handle
 
-Please ensure you run handle.exe or handle64.exe (or preferably attempt to run both) to accept the EULA before trying to use AHA-Scraper to gather pipe info.
+(optional - scraper will now attempt to accept EULA) Please ensure you run handle.exe or handle64.exe (or preferably attempt to run both) to accept the EULA before trying to use AHA-Scraper to gather pipe info.
 
