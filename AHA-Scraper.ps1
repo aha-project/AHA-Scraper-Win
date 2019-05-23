@@ -2,7 +2,7 @@ param([uint32]$SecondsToScan=5)
 
 Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1               #import the Get-PESecurity powershell module
 . .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1              #dot source the Get-PESecurity powershell module
-$AHAScraperVersion='v0.8.6b5'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.6b6'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 
 function GetNewPids
 {
@@ -23,7 +23,7 @@ function GetNewPids
 function GetNetConnections
 {
 	try { if ( Test-Path $NetConnectionsFile ) { Remove-Item $NetConnectionsFile } } #delete the old input csv file from last run, if exists, or we will end up with weird results (because this script will start reading while cports is writing over the old file)
-	catch { Write-Warning -Message ('Unable to delete "{0}", there may be a permissions issue. Error: {1}' -f @($NetConnectionsFile,$Error[0]))}
+	catch { Write-Warning -Message ('Unable to delete "{0}", there may be a permissions issue. Error: {1}' -f @($NetConnectionsFile,$Error[0])) }
 	$MillisecondsToScan=$SecondsToScan*1000
 	Write-Host ('Starting currports scan for {0} milliseconds...' -f @($MillisecondsToScan))
 	.\deps\cports\cports.exe /cfg .\cports.cfg /scomma $NetConnectionsFile /CaptureTime $MillisecondsToScan /RunAsAdmin   #call cports and ask for a CSV. BTW if the .cfg file for cports is not present, this will break, because we need the CSV column headrs option set
@@ -36,7 +36,7 @@ function ScanNetconnections
 		Write-Host ('Waiting for currPorts to output csv file...')
 		try 
 		{ 
-			if ( Test-Path $NetConnectionsFile ) { Get-Content $NetConnectionsFile -Wait -EA Stop | Select-String 'Process' | ForEach-Object { Write-Host 'NetConnections file generated.'; break } }
+			if ( Test-Path $NetConnectionsFile ) { Get-Content $NetConnectionsFile -Wait -EA Stop | Select-String 'Process' | ForEach-Object { Write-Host ('NetConnections file generated.'); break } }
 		} #attempt to read in a 1s loop until the file shows up
 		catch { Write-Warning -Message( 'Unable to open input file. We will try again soon. Error:' -f @($Error[0])) }
 		Start-Sleep 1 #sleep for 1s while we wait for file
