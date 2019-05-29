@@ -266,10 +266,11 @@ function Write-Output
 			if ($aPid) { $ScanResult=$($BinaryScanResultsByPID[$aPid]) }   #try to grab the correct result from dataset of scanned binaries
 			if (!$ScanResult) { $ScanResult=$BinaryScanError }
 			$ScanResult.Keys | ForEach-Object { $ResultRecord[$_]=$ScanResult[$_] }
+			$ResultRecord.Protocol='none'
+			$OutputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null # TODO:I don't recall entirely why we have to make it a PSObject for export-csv to like it...something to look into in the future I suppose
 		}
 		catch { Write-Warning -Message ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
-		$OutputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null # TODO:I don't recall entirely why we have to make it a PSObject for export-csv to like it...something to look into in the future I suppose
-
+	
 	}
 
 	$TempCols=@{}
