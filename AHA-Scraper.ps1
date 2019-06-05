@@ -2,7 +2,7 @@ param([uint32]$SecondsToScan=5)
 
 Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1               #import the Get-PESecurity powershell module
 . .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1              #dot source the Get-PESecurity powershell module
-$AHAScraperVersion='v0.8.6b6'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.6b7'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 
 function GetNewPids
 {
@@ -15,7 +15,7 @@ function GetNewPids
 			$ResultRecord.ProcessName=$_.ProcessName+'.exe'
 			$ResultRecord.ProcessPath=$_.Path
 			$PIDToPath.Add( [string]$_.Id, $ResultRecord ) #basically all the other hashtables in here are indexed by string, make this consistent
-			if ($ResultRecord.ProcessPath) { Get-BinaryScanForPID $ResultRecord.PID $ResultRecord.ProcessPath }
+			if ($ResultRecord.ProcessPath) { PermissionScanForPID $ResultRecord.PID $ResultRecord.ProcessPath }
 		}
 	}
 }
@@ -57,12 +57,10 @@ function ScanNetconnections
 		$ResultRecord.FileDescription=$ResultRecord.FileDescription -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
 		$ResultRecord.FileVersion=$ResultRecord.FileVersion -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
 		$ResultRecord.Company=$ResultRecord.Company -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
-		# $ResultRecord.AHAScraperVersion=$AHAScraperVersion  #add the scraper version
-		# $ResultRecord.AHARuntimeEnvironment=$OurEnvInfo     #add the runtime info
 		$ResultRecord.remove('WindowTitle')					#ignore useless column 'WindowTitle'
 		$ProcessesByPid[$ResultRecord.PID]=$ResultRecord  #used for looking up an example of a process via a pid
 		$WorkingData.Add($ResultRecord) | Out-Null #store this working data to the internal representation datastore
-		if ($ResultRecord.ProcessPath) { Get-BinaryScanForPID $ResultRecord.PID $ResultRecord.ProcessPath }
+		if ($ResultRecord.ProcessPath) { BinaryScanForPID $ResultRecord.PID $ResultRecord.ProcessPath }
 	}
 }
 
@@ -164,8 +162,6 @@ function ScanHandles
 		$ResultRecord.RemoteAddress=$PipePath
 		$ResultRecord.LocalPort=$UniquePipeNumber[$PipePath]
 		$ResultRecord.RemotePort=$UniquePipeNumber[$PipePath]
-		# $ResultRecord.AHAScraperVersion=$AHAScraperVersion  #add the scraper version
-		# $ResultRecord.AHARuntimeEnvironment=$OurEnvInfo     #add the runtime info
 	
 		if (!$ProcessesByPid[$ResultRecord.PID]) { $ProcessesByPid[$ResultRecord.PID]=$ResultRecord } #used for looking up an example of a process via a pid (if one exists, ignore, since there will be more info in an example from cports)
 
@@ -176,11 +172,30 @@ function ScanHandles
 	}
 }
 
-function Get-BinaryScanForPID
+$PermsForPidResults=@{}
+function PermissionScanForPID
+{
+	param([string]$ProcessID, [string]$EXEPath)
+	$PidScanResult=$PermsForPidResults[$ProcessID]
+	if (!$PidScanResult) 
+	{
+		#Write-Host "TestPriv: Scanning $ProcessID $EXEPath"
+		$PidScanResult=@{}
+		try
+		{	#This scan will populate 'PrivilegeLevel','Privileges' in the final output file
+			$PrivilegeInfo = Test-ProcessPrivilege -processId $ProcessID -EA SilentlyContinue
+			$PermsForPidResults[$ProcessID]=$PrivilegeInfo
+		}
+		catch { Write-Warning ('Test-ProcessPrivilege: Unable to check PID={0}. Error: {1}' -f @($ProcessID,$Error[0])) }
+	}
+}
+
+
+function BinaryScanForPID
 {
 	param([string]$ProcessID, [string]$EXEPath)
 	try
-    {	if ( ($ProcessID -eq 0) -and (!$EXEPath) ) { return }  #skip if there's no path to exe defined and we're process zero, to hide _only_ the expected failure, others we should print about
+    {	if ( ($ProcessID -eq 0) -or (!$EXEPath) ) { return }  #skip if there's no path to exe defined and we're process zero, to hide _only_ the expected failure, others we should print about
 		if ( $BinaryScanResultsByPID[$ProcessID] ) { return }    #if we already have a result for this process id, then no need to scan anything
 		$FileResults=@{}
 		$EXEResults=$BinaryScanResultsByPath[$EXEPath];
@@ -211,16 +226,29 @@ function Get-BinaryScanForPID
 			}
 		}
 		$EXEResults.Keys | ForEach-Object { $FileResults[$_]=$EXEResults[$_] }
-		try
-			{	#This scan will populate 'PrivilegeLevel','Privileges' in the final output file
-				$PrivilegeInfo = Test-ProcessPrivilege -processId $ProcessID -EA SilentlyContinue
-				$FileResults.PrivilegeLevel = $PrivilegeInfo.PrivilegeLevel
-				$FileResults.Privileges = $PrivilegeInfo.Privileges
-			}
-			catch { Write-Warning ('Test-ProcessPrivilege: Unable to check PID={0}. Error: {1}' -f @($ProcessID,$Error[0])) }
+	
+		PermissionScanForPID $ProcessID $EXEPath
+		$PidScanResult=$PermsForPidResults[$ProcessID]
+		if ($PidScanResult) 
+		{
+			$FileResults.PrivilegeLevel = $PidScanResult.PrivilegeLevel
+			$FileResults.Privileges = $PidScanResult.Privileges
+		}
+
+
 		$BinaryScanResultsByPID[$ProcessID]=$FileResults  #insert results from scanning this binary into the dataset of scanned binaries
     }
 	catch { Write-Warning ('Unexpected overall failure scanning "{0}" line: {1} Error: {2}' -f @($EXEPath,$Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
+}
+
+function UpdateBinaryScanData #scans binaries and merges with pid priv scans (which already happened)
+{
+	Write-Host ('Scanning any new detected executables...')
+	$PIDToPath.Keys | ForEach-Object { 
+		$PidRecord=$PIDToPath[$_]
+		#Write-Host "about to scan" $PidRecord.PID $PidRecord.ProcessPath
+		BinaryScanForPID $PidRecord.PID $PidRecord.ProcessPath 
+	}
 }
 
 function Write-Output
@@ -289,8 +317,6 @@ function Write-Output
 	$OutputData | Select-Object $SortedColumns | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8 # write all the results to file
 }
 
-
-
 #Entry point into script is here (everything above should be function or param definitions)
 
 $NetConnectionsFile='.\NetConnections.csv'         
@@ -315,7 +341,7 @@ $PipeCounter=[int]1; #shared counter so we can assign a unique number to each pi
 [System.Collections.ArrayList]$OutputData=New-Object System.Collections.ArrayList($null)  #create empty array list for final output dataset
 
 #lookup tables
-$PIDToPath=@{}
+$PIDToPath=@{} #result of getnewpids
 $BinaryScanResultsByPID=@{}   #Binary scan results by PID
 $BinaryScanResultsByPath=@{}  #Binary scan results by path of exe
 $ProcessesByPid=@{}
@@ -332,6 +358,7 @@ while ($true)
 {
 	GetHandles
 	GetNewPids
+	UpdateBinaryScanData
 	$Elapsed=$totalScanTime.Elapsed.TotalSeconds -as [uint32]
 	if  ( $Elapsed -gt $SecondsToScan ) {break;}
 	Write-Host ('Continuing subscans, {0} seconds have elapsed of time budget {1} seconds' -f @($Elapsed,$SecondsToScan))
