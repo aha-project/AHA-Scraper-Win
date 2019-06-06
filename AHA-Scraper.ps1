@@ -23,6 +23,7 @@ function GetNetConnections #begin the netconnections gathering process (async)
 {
 	try { if ( Test-Path $NetConnectionsFile ) { Remove-Item $NetConnectionsFile } } #delete the old input csv file from last run, if exists, or we will end up with weird results (because this script will start reading while cports is writing over the old file)
 	catch { Write-Warning -Message ('Unable to delete "{0}", there may be a permissions issue. Error: {1}' -f @($NetConnectionsFile,$Error[0])) }
+	if ($SecondsToScan -lt 1) { $SecondsToScan=1 }
 	$MillisecondsToScan=$SecondsToScan*1000
 	Write-Host ('Starting currports scan for {0} milliseconds...' -f @($MillisecondsToScan))
 	.\deps\cports\cports.exe /cfg .\cports.cfg /scomma $NetConnectionsFile /CaptureTime $MillisecondsToScan /RunAsAdmin   #call cports and ask for a CSV. BTW if the .cfg file for cports is not present, this will break, because we need the CSV column headrs option set
