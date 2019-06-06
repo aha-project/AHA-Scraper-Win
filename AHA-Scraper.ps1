@@ -1,10 +1,9 @@
-param([uint32]$SecondsToScan=5)
+param([uint32]$SecondsToScan=15)                            #script parameters secondstoscan is how many seconds to run the scan for (even on a fast machine with few procs, 15s is about the fastest seen anyway)
+Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1     #import the Get-PESecurity powershell module
+. .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1    #dot source the Get-PESecurity powershell module
+$AHAScraperVersion='v0.8.6b8'						        #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 
-Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1               #import the Get-PESecurity powershell module
-. .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1              #dot source the Get-PESecurity powershell module
-$AHAScraperVersion='v0.8.6b7'						 #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
-
-function GetNewPids
+function GetNewPids #gets new pids, runs Test-ProcessPriv on any new pids found
 {
 	Write-Host ('Scanning for new processes...')
 	Get-Process | Sort-Object -Property Id | ForEach-Object {
@@ -15,12 +14,12 @@ function GetNewPids
 			$ResultRecord.ProcessName=$_.ProcessName+'.exe'
 			$ResultRecord.ProcessPath=$_.Path
 			$PIDToPath.Add( [string]$_.Id, $ResultRecord ) #basically all the other hashtables in here are indexed by string, make this consistent
-			if ($ResultRecord.ProcessPath) { PermissionScanForPID $ResultRecord.PID $ResultRecord.ProcessPath }
+			PermissionScanForPID $ResultRecord.PID $ResultRecord.ProcessPath
 		}
 	}
 }
 
-function GetNetConnections
+function GetNetConnections #begin the netconnections gathering process (async)
 {
 	try { if ( Test-Path $NetConnectionsFile ) { Remove-Item $NetConnectionsFile } } #delete the old input csv file from last run, if exists, or we will end up with weird results (because this script will start reading while cports is writing over the old file)
 	catch { Write-Warning -Message ('Unable to delete "{0}", there may be a permissions issue. Error: {1}' -f @($NetConnectionsFile,$Error[0])) }
@@ -29,7 +28,7 @@ function GetNetConnections
 	.\deps\cports\cports.exe /cfg .\cports.cfg /scomma $NetConnectionsFile /CaptureTime $MillisecondsToScan /RunAsAdmin   #call cports and ask for a CSV. BTW if the .cfg file for cports is not present, this will break, because we need the CSV column headrs option set
 }
 
-function ScanNetconnections
+function ScanNetconnections #finalize the scan of the net connections
 {
 	while($true)
 	{
@@ -64,7 +63,7 @@ function ScanNetconnections
 	}
 }
 
-function GetHandles
+function GetHandles #calls out to handles to get the handles (synchronously), minimally parses and stores results for future finalization
 {
 	$HandleFile='handles.output'
 	if ( !(Test-Path $HandleEXEPath) )  { Write-Host ('User has not installed "Handle" from SysInternals suite to {0}, or EULA not accepted (launch once by double clicking), skipping.' -f @($HandleEXEPath)); return }
@@ -124,7 +123,7 @@ function GetHandles
 	catch { Write-Warning ('Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($HandleFile,$Error[0])) }
 }
 
-function ScanHandles
+function ScanHandles #does the final scan of all the discovered handles
 {
 	Write-Host ('Finalizing handle data...')
 	foreach ($HandleLine in $PartialPipeResults) #turn each line of the imported data into a hashtable
@@ -168,18 +167,16 @@ function ScanHandles
 		$LowestPipePid=[string] $PipeToPidMap[$PipePath]
 		if ($ResultRecord.PID -eq $LowestPipePid) { $ResultRecord.State='Listening' }
 		if (!$Found) { $WorkingData.Add($ResultRecord) | Out-Null } #store this working data to the internal representation datastore
-		
 	}
 }
 
-$PermsForPidResults=@{}
-function PermissionScanForPID
+function PermissionScanForPID #runs Test-ProcessPriv on any pids we don't have cached results for, and caches those results.
 {
 	param([string]$ProcessID, [string]$EXEPath)
+	if (!$ProcessID -or !$EXEPath) { return; }
 	$PidScanResult=$PermsForPidResults[$ProcessID]
 	if (!$PidScanResult) 
-	{
-		#Write-Host "TestPriv: Scanning $ProcessID $EXEPath"
+	{	#Write-Host "TestPriv: Scanning $ProcessID $EXEPath"
 		$PidScanResult=@{}
 		try
 		{	#This scan will populate 'PrivilegeLevel','Privileges' in the final output file
@@ -190,12 +187,11 @@ function PermissionScanForPID
 	}
 }
 
-
-function BinaryScanForPID
+function BinaryScanForPID #the actual legwork of combining the binary scan (get-pesecurity, file hashes, etc) and pid scan data (such as test-processpriv) into a final result record
 {
 	param([string]$ProcessID, [string]$EXEPath)
 	try
-    {	if ( ($ProcessID -eq 0) -or (!$EXEPath) ) { return }  #skip if there's no path to exe defined and we're process zero, to hide _only_ the expected failure, others we should print about
+    {	if ( ($ProcessID -eq 0) -or (!$EXEPath) ) { return }  #skip if there's no path to exe defined or we're process zero
 		if ( $BinaryScanResultsByPID[$ProcessID] ) { return }    #if we already have a result for this process id, then no need to scan anything
 		$FileResults=@{}
 		$EXEResults=$BinaryScanResultsByPath[$EXEPath];
@@ -235,7 +231,6 @@ function BinaryScanForPID
 			$FileResults.Privileges = $PidScanResult.Privileges
 		}
 
-
 		$BinaryScanResultsByPID[$ProcessID]=$FileResults  #insert results from scanning this binary into the dataset of scanned binaries
     }
 	catch { Write-Warning ('Unexpected overall failure scanning "{0}" line: {1} Error: {2}' -f @($EXEPath,$Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
@@ -245,8 +240,7 @@ function UpdateBinaryScanData #scans binaries and merges with pid priv scans (wh
 {
 	Write-Host ('Scanning any new detected executables...')
 	$PIDToPath.Keys | ForEach-Object { 
-		$PidRecord=$PIDToPath[$_]
-		#Write-Host "about to scan" $PidRecord.PID $PidRecord.ProcessPath
+		$PidRecord=$PIDToPath[$_] #Write-Host "about to scan" $PidRecord.PID $PidRecord.ProcessPath
 		BinaryScanForPID $PidRecord.PID $PidRecord.ProcessPath 
 	}
 }
@@ -256,38 +250,29 @@ function Write-Output
 	Write-Host ('Writing results...')
 	$PIDsLeft=@{}
 	$PIDToPath.keys | ForEach-Object { $PIDSleft[$_]=$PIDToPath[$_] }
-	# $count=[int]0
-	# $PIDsLeft.Keys | ForEach-Object { $count++ }
-	# Write-Host $count
 	foreach ($ResultRecord in $WorkingData)
 	{
 		try
 		{
 			$ScanResult=$null;
-			if ($($ResultRecord.PID)) { $ScanResult=$($BinaryScanResultsByPID[$($ResultRecord.PID)]) }   #try to grab the correct result from dataset of scanned binaries
-			if (!$ScanResult) { $ScanResult=$BinaryScanError }                              #if we cant find a result for this EXEPath, we'll use the default set of errors
-			$ScanResult.Keys | ForEach-Object { $ResultRecord[$_]=$ScanResult[$_] }                      #copy the results for the binary into this line of the output
+			if ($($ResultRecord.PID)) { $ScanResult=$($BinaryScanResultsByPID[$($ResultRecord.PID)]) }  #try to grab the correct result from dataset of scanned binaries
+			if (!$ScanResult) { $ScanResult=$BinaryScanError }                                          #if we cant find a result for this EXEPath, we'll use the default set of errors
+			$ScanResult.Keys | ForEach-Object { $ResultRecord[$_]=$ScanResult[$_] }                     #copy the results for the binary into this line of the output
 			$PIDsLeft.Remove([string]$ResultRecord.PID)
 		}
 		catch { Write-Warning -Message ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
 		$OutputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null # TODO:I don't recall entirely why we have to make it a PSObject for export-csv to like it...something to look into in the future I suppose
 	}
 
-	# $count=[int]0
-	# $PIDsLeft.Keys | ForEach-Object { $count++ }
-	# Write-Host $count
-
-	foreach ($aPid in $PIDsLeft.keys)
+	foreach ($aPid in $PIDsLeft.keys) #for any PIDs not already put into the output set, write one line per pid so the user can see scans of all the binaries on the system
 	{
 		$ResultRecord=@{}
 		$BlankHandleResult.keys | ForEach-Object { $ResultRecord[$_]=$BlankHandleResult[$_] }
 		$ResultRecord.PID=$aPid
 		
 		$PSRecord=$PIDsLeft[$aPid];
-	
 		if ($PSRecord.ProcessPath) { $ResultRecord.ProcessPath=$PSRecord.ProcessPath }
 		$ResultRecord.ProcessName=$PSRecord.ProcessName
-
 		try
 		{
 			$ScanResult=$null;
@@ -298,7 +283,6 @@ function Write-Output
 			$OutputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null # TODO:I don't recall entirely why we have to make it a PSObject for export-csv to like it...something to look into in the future I suppose
 		}
 		catch { Write-Warning -Message ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
-	
 	}
 
 	$TempCols=@{}
@@ -316,6 +300,7 @@ function Write-Output
 	#TODO: future: sort output rows by pid?
 	$OutputData | Select-Object $SortedColumns | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8 # write all the results to file
 }
+
 
 #Entry point into script is here (everything above should be function or param definitions)
 
@@ -341,12 +326,13 @@ $PipeCounter=[int]1; #shared counter so we can assign a unique number to each pi
 [System.Collections.ArrayList]$OutputData=New-Object System.Collections.ArrayList($null)  #create empty array list for final output dataset
 
 #lookup tables
-$PIDToPath=@{} #result of getnewpids
-$BinaryScanResultsByPID=@{}   #Binary scan results by PID
-$BinaryScanResultsByPath=@{}  #Binary scan results by path of exe
-$ProcessesByPid=@{}
-$PipeToPidMap=@{}
-$UniquePipeNumber=@{}
+$PIDToPath=@{} 				  #result of getnewpids
+$BinaryScanResultsByPID=@{}   #Binary scan results by PID (Results of all the various subscans)
+$BinaryScanResultsByPath=@{}  #Binary scan results by path of exe (used to cache results for within GetBinaryScanForPid)
+$PermsForPidResults=@{}       #caches the results of Test-ProcessPriv per PID
+$ProcessesByPid=@{}           #used by handles and netconnections to keep an example of a pid's full results around for future processing
+$PipeToPidMap=@{}             #reverse mapping from pipe path to PID
+$UniquePipeNumber=@{}         #mapping between a pipe path and a unique number
 
 try { if ( Test-Path $BinaryAnalysisFile ) { Clear-Content $BinaryAnalysisFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
 catch { Write-Warning ('Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($BinaryAnalysisFile,$Error[0])) }
@@ -372,4 +358,3 @@ Write-Output
 
 $totalScanTime.Stop()
 Write-Host ('Complete, elapsed time: {0}.' -f @($totalScanTime.Elapsed)) #report how long it took to scan/process everything
-
