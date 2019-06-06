@@ -64,6 +64,10 @@ function ScanNetconnections #finalize the scan of the net connections
 	}
 }
 
+function IsNumeric ($Value) {
+    return $Value -match "^[\d\.]+$"
+}
+
 function GetHandles #calls out to handles to get the handles (synchronously), minimally parses and stores results for future finalization
 {
 	$HandleFile='handles.output'
@@ -84,7 +88,7 @@ function GetHandles #calls out to handles to get the handles (synchronously), mi
 		Start-Sleep 1 #sleep for 1s while we wait for file
 	}
 	$HandleObjects=$(Get-Content -path $HandleFile )  #import the csv from currports
-	$CurrentExecutable='' #executable is updated everytime an interation of the loop sees an exe, so this needs to persist between iterations
+	$CurrentExecutable='ScanError' #executable is updated everytime an interation of the loop sees an exe, so this needs to persist between iterations
 	foreach ($HandleLine in $HandleObjects) #turn each line of the imported data into a hashtable
 	{
 		$HandleLine=$HandleLine.Trim()
@@ -97,6 +101,7 @@ function GetHandles #calls out to handles to get the handles (synchronously), mi
 			$CurProcTokens=$CurrentExecutable.split()
 			if (!$CurProcTokens[0] -or !$CurProcTokens[2] -or !$PipePath) { continue; }
 			$HandlePID=$CurProcTokens[2];
+			if (!$HandlePID -or !(IsNumeric $HandlePID)) { Write-Warning ('Found a pid that looks like nonsense. CurExeLine="{0}" CurHandleLine="{1}". Continuing, but there may be some wonkyness.' -f @($CurrentExecutable,$HandleLine)) }
 			$PartialResult=@{}
 			$PartialResult.PID=$HandlePID
 			$PartialResult.PipePath=$PipePath
@@ -149,10 +154,10 @@ function ScanHandles #does the final scan of all the discovered handles
 			$BlankHandleResult.Keys | ForEach-Object { $ResultRecord[$_]=$BlankHandleResult[$_] }
 			$ResultRecord.PID=$HandlePID
 			$PidRecord=$PIDToPath[$ResultRecord.PID]
-			if (!$PidRecord) { Write-Warning -Message ('failed to locate a pid record for pid {0}' -f @($HandlePID)) }
+			if (!$PidRecord) { Write-Warning -Message ('failed to locate a pid record for pid "{0}"' -f @($HandlePID)) }
 			$ResultRecord.ProcessPath=$PidRecord.ProcessPath
 			$ResultRecord.ProcessName=$PidRecord.ProcessName
-			if (!$($PidRecord.ProcessPath)) { Write-Warning -Message ('No path info for {0} {1}' -f @($HandlePID,$PidRecord.ProcessName)) }
+			if (!$($PidRecord.ProcessPath)) { Write-Warning -Message ('No path info for "{0}" "{1}"' -f @($HandlePID,$PidRecord.ProcessName)) }
 		}
 		
 		if (!$UniquePipeNumber[$PipePath]) { $UniquePipeNumber[$PipePath]=$PipeCounter++ }
@@ -184,7 +189,7 @@ function PermissionScanForPID #runs Test-ProcessPriv on any pids we don't have c
 			$PrivilegeInfo = Test-ProcessPrivilege -processId $ProcessID -EA SilentlyContinue
 			$PermsForPidResults[$ProcessID]=$PrivilegeInfo
 		}
-		catch { Write-Warning ('Test-ProcessPrivilege: Unable to check PID={0}. Error: {1}' -f @($ProcessID,$Error[0])) }
+		catch { Write-Warning ('Test-ProcessPrivilege: PID dissappeared before we could scan it? PID="{0}" Path="{1}". Error: {2}' -f @($ProcessID,$EXEPath,$Error[0])) }
 	}
 }
 
