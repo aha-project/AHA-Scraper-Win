@@ -5,7 +5,7 @@ $AHAScraperVersion='v0.8.6b8'						        #This script tested/requires powershe
 
 function GetNewPids #gets new pids, runs Test-ProcessPriv on any new pids found
 {
-	Write-Host ('Scanning for new processes...')
+	$NewCounter=0;
 	Get-Process | Sort-Object -Property Id | ForEach-Object {
 		if (!$PIDToPath[([string]$_.Id)]) 
 		{
@@ -15,8 +15,10 @@ function GetNewPids #gets new pids, runs Test-ProcessPriv on any new pids found
 			$ResultRecord.ProcessPath=$_.Path
 			$PIDToPath.Add( [string]$_.Id, $ResultRecord ) #basically all the other hashtables in here are indexed by string, make this consistent
 			PermissionScanForPID $ResultRecord.PID $ResultRecord.ProcessPath
+			$NewCounter++
 		}
 	}
+	Write-Host ('PID scan found {0} new PIDs.' -f  @($NewCounter))
 }
 
 function GetNetConnections #begin the netconnections gathering process (async)
@@ -33,17 +35,15 @@ function ScanNetconnections #finalize the scan of the net connections
 {
 	while($true)
 	{
-		Write-Host ('Waiting for currPorts to output csv file...')
 		try 
 		{ 
-			if ( Test-Path $NetConnectionsFile ) { Get-Content $NetConnectionsFile -Wait -EA Stop | Select-String 'Process' | ForEach-Object { Write-Host ('NetConnections file generated.'); break } }
+			if ( Test-Path $NetConnectionsFile ) { Get-Content $NetConnectionsFile -Wait -EA Stop | Select-String 'Process' | ForEach-Object { Write-Host ('Importing NetConnections file...'); break } }
 		} #attempt to read in a 1s loop until the file shows up
 		catch { Write-Warning -Message( 'Unable to open input file. We will try again soon. Error:' -f @($Error[0])) }
 		Start-Sleep 1 #sleep for 1s while we wait for file
 	}
-	Write-Host ('Finalizing NetConnections data...')
 	$NetConnectionObjects=$(import-csv -path $NetConnectionsFile -delimiter ',')  #import the csv from currports
-
+	$Counter=0
 	foreach ($CSVLine in $NetConnectionObjects) #turn each line of the imported csv data into a hashtable, also clean up some input data at the same time
 	{
 		$ResultRecord=@{}
@@ -59,9 +59,11 @@ function ScanNetconnections #finalize the scan of the net connections
 		$ResultRecord.Company=$ResultRecord.Company -replace '[^\p{L}\p{N}\p{Zs}\p{P}]', ''
 		$ResultRecord.remove('WindowTitle')					#ignore useless column 'WindowTitle'
 		$ProcessesByPid[$ResultRecord.PID]=$ResultRecord  #used for looking up an example of a process via a pid
+		$Counter++
 		$WorkingData.Add($ResultRecord) | Out-Null #store this working data to the internal representation datastore
 		if ($ResultRecord.ProcessPath) { BinaryScanForPID $ResultRecord.PID $ResultRecord.ProcessPath }
 	}
+	Write-Host ('Finalized data for {0} network connections.' -f @($Counter))
 }
 
 function IsNumeric ($Value) {
@@ -72,7 +74,6 @@ function GetHandles #calls out to handles to get the handles (synchronously), mi
 {
 	$HandleFile='handles.output'
 	if ( !(Test-Path $HandleEXEPath) )  { Write-Host ('User has not installed "Handle" from SysInternals suite to {0}, or EULA not accepted (launch once by double clicking), skipping.' -f @($HandleEXEPath)); return }
-	Write-Host ('Scanning for new pipes...')
 	try { if ( Test-Path $HandleFile ) { Remove-Item $HandleFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
 	catch { Write-Warning ('Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($HandleFile,$Error[0])) }
 	& $HandleEXEPath -a -accepteula > $HandleFile 
@@ -87,6 +88,7 @@ function GetHandles #calls out to handles to get the handles (synchronously), mi
 		Write-Host ('Waiting for handle to output file...')
 		Start-Sleep 1 #sleep for 1s while we wait for file
 	}
+	$NewCounter=0
 	$HandleObjects=$(Get-Content -path $HandleFile )  #import the csv from currports
 	$CurrentExecutable='ScanError' #executable is updated everytime an interation of the loop sees an exe, so this needs to persist between iterations
 	foreach ($HandleLine in $HandleObjects) #turn each line of the imported data into a hashtable
@@ -115,7 +117,7 @@ function GetHandles #calls out to handles to get the handles (synchronously), mi
 					break
 				}
 			}
-			if (!$Found) { $PartialPipeResults.add( $PartialResult ) | Out-Null }
+			if (!$Found) { $PartialPipeResults.add( $PartialResult ) | Out-Null; $NewCounter++ }
 
 			$PidAsNum=$HandlePID -as [int]
 			if ($PipeToPidMap[$PipePath])
@@ -127,11 +129,12 @@ function GetHandles #calls out to handles to get the handles (synchronously), mi
 	}
 	try { if ( Test-Path $HandleFile ) { Remove-Item $HandleFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
 	catch { Write-Warning ('Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($HandleFile,$Error[0])) }
+	Write-Host ('Pipe scan found {0} new pipes.' -f  @($NewCounter))
 }
 
 function ScanHandles #does the final scan of all the discovered handles
 {
-	Write-Host ('Finalizing handle data...')
+	$Counter=0
 	foreach ($HandleLine in $PartialPipeResults) #turn each line of the imported data into a hashtable
 	{
 		$HandlePID=$HandleLine.PID
@@ -172,8 +175,10 @@ function ScanHandles #does the final scan of all the discovered handles
 
 		$LowestPipePid=[string] $PipeToPidMap[$PipePath]
 		if ($ResultRecord.PID -eq $LowestPipePid) { $ResultRecord.State='Listening' }
-		if (!$Found) { $WorkingData.Add($ResultRecord) | Out-Null } #store this working data to the internal representation datastore
+		$WorkingData.Add($ResultRecord) | Out-Null #store this working data to the internal representation datastore
+		$Counter++
 	}
+	Write-Host ('Finalized data for {0} pipes.' -f @($Counter))
 }
 
 function PermissionScanForPID #runs Test-ProcessPriv on any pids we don't have cached results for, and caches those results.
@@ -256,6 +261,8 @@ function Write-Output
 	Write-Host ('Writing results...')
 	$PIDsLeft=@{}
 	$PIDToPath.keys | ForEach-Object { $PIDSleft[$_]=$PIDToPath[$_] }
+	$UnconnectedLineCounter=0
+	$ConnectedLineCounter=0
 	foreach ($ResultRecord in $WorkingData)
 	{
 		try
@@ -268,6 +275,7 @@ function Write-Output
 		}
 		catch { Write-Warning -Message ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
 		$OutputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null # TODO:I don't recall entirely why we have to make it a PSObject for export-csv to like it...something to look into in the future I suppose
+		$ConnectedLineCounter++
 	}
 
 	foreach ($aPid in $PIDsLeft.keys) #for any PIDs not already put into the output set, write one line per pid so the user can see scans of all the binaries on the system
@@ -287,6 +295,7 @@ function Write-Output
 			$ScanResult.Keys | ForEach-Object { $ResultRecord[$_]=$ScanResult[$_] }
 			$ResultRecord.Protocol='none'
 			$OutputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null # TODO:I don't recall entirely why we have to make it a PSObject for export-csv to like it...something to look into in the future I suppose
+			$UnconnectedLineCounter++
 		}
 		catch { Write-Warning -Message ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
 	}
@@ -305,6 +314,7 @@ function Write-Output
 
 	#TODO: future: sort output rows by pid?
 	$OutputData | Select-Object $SortedColumns | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8 # write all the results to file
+	Write-Host ('Wrote {0} lines for connected (net/pipe/etc) PIDs and {1} for unconnected PIDs, {2} lines total.' -f @($ConnectedLineCounter, $UnconnectedLineCounter, $OutputData.Count) )
 }
 
 
@@ -346,6 +356,7 @@ catch { Write-Warning ('Unable to clear out "{0}", there may be a permissions is
 GetNetConnections
 $totalScanTime=[Diagnostics.Stopwatch]::StartNew()
 
+Write-Host ('Starting subscans...')
 while ($true)
 {
 	GetHandles
@@ -356,7 +367,7 @@ while ($true)
 	Write-Host ('Continuing subscans, {0} seconds have elapsed of time budget {1} seconds' -f @($Elapsed,$SecondsToScan))
 }
 
-Write-Host ('Scan over time complete, finalizing results.')
+Write-Host ('Timed scans complete, finalizing results...')
 ScanNetconnections
 ScanHandles #always finalize handles after netconnections, since netconenctions will populate more pid fields we can use
 
