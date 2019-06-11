@@ -329,7 +329,7 @@ $SHA1Alg  =new-object -type System.Security.Cryptography.SHA1Managed
 $MD5Alg   =new-object -type System.Security.Cryptography.MD5CryptoServiceProvider
 
 $TempInfo=(Get-WmiObject win32_operatingsystem)
-try { $BuildMonth=(Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ReleaseId).ReleaseId.trim(); } Catch {}
+try { $BuildMonth=(Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name ReleaseId -EA SilentlyContinue).ReleaseId.trim(); } Catch {}
 $OurEnvInfo='PowerShell {0} on {1} {2} {3}' -f @($PSVersionTable.PSVersion.ToString().trim(),$TempInfo.caption.toString().trim(),$BuildMonth,$TempInfo.OSArchitecture.ToString().trim())
 Write-Host ('AHA-Scraper {0} starting in {1}' -f @($AHAScraperVersion,$OurEnvInfo))
 $HandleEXEPath='.\deps\handle\handle.exe'
