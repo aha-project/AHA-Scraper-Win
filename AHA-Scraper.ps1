@@ -6,15 +6,24 @@ $AHAScraperVersion='v0.8.6'						        #This script tested/requires powershell
 function GetNewPids #gets new pids, runs Test-ProcessPriv on any new pids found
 {
 	$NewCounter=0;
-	Get-Process | Sort-Object -Property Id | ForEach-Object {
+	Get-Process -IncludeUserName | Sort-Object -Property Id | ForEach-Object {
 		if (!$PIDToPath[([string]$_.Id)]) 
 		{
 			$ResultRecord=@{}
 			$ResultRecord.PID=[string]$_.Id;
 			$ResultRecord.ProcessName=$_.ProcessName+'.exe'
 			$ResultRecord.ProcessPath=$_.Path
+			$ResultRecord.UserName=$_.UserName
+			try 
+			{
+				$ResultRecord.ParentPID = (Get-WmiObject win32_process | where-object processid -eq $_.Id).parentprocessid
+			}
+			catch { Write-Host ('Failed to determine Parent PID for PID={0} ProcessName={1}' -f @($ResultRecord.PID, $ResultRecord.ProcessName)) }
+			if (! $ResultRecord.ParentPID) { $ResultRecord.ParentPID='' }
+			if (! $ResultRecord.UserName) { $ResultRecord.UserName='' }
+			#Write-Host ('"un= {0}' -f @($ResultRecord.UserName))
 			$PIDToPath.Add( [string]$_.Id, $ResultRecord ) #basically all the other hashtables in here are indexed by string, make this consistent
-			PermissionScanForPID $ResultRecord.PID $ResultRecord.ProcessPath
+			PermissionScanForPID $ResultRecord   #.PID $ResultRecord.ProcessPath
 			$NewCounter++
 		}
 	}
@@ -160,6 +169,7 @@ function ScanHandles #does the final scan of all the discovered handles
 			if (!$PidRecord) { Write-Warning -Message ('failed to locate a pid record for pid "{0}"' -f @($HandlePID)) }
 			$ResultRecord.ProcessPath=$PidRecord.ProcessPath
 			$ResultRecord.ProcessName=$PidRecord.ProcessName
+			$ResultRecord.UserName=$PidRecord.UserName
 			if (!$($PidRecord.ProcessPath)) { Write-Warning -Message ('No path info for "{0}" "{1}"' -f @($HandlePID,$PidRecord.ProcessName)) }
 		}
 		
@@ -183,18 +193,21 @@ function ScanHandles #does the final scan of all the discovered handles
 
 function PermissionScanForPID #runs Test-ProcessPriv on any pids we don't have cached results for, and caches those results.
 {
-	param([string]$ProcessID, [string]$EXEPath)
-	if (!$ProcessID -or !$EXEPath) { return; }
+	param([hashtable] $PidRecord) #[string]$ProcessID, [string]$EXEPath)
+	if (!$PidRecord.ProcessID -or !$PidRecord.EXEPath) { return; }
+	$ProcessID=$PidRecord.$ProcessID;
 	$PidScanResult=$PermsForPidResults[$ProcessID]
 	if (!$PidScanResult) 
 	{	#Write-Host "TestPriv: Scanning $ProcessID $EXEPath"
-		$PidScanResult=@{}
 		try
 		{	#This scan will populate 'PrivilegeLevel','Privileges' in the final output file
+			#$PidScanResult=$PIDToPath[$ProcessID].clone()
 			$PrivilegeInfo = Test-ProcessPrivilege -processId $ProcessID -EA SilentlyContinue
+			#$PrivilegeInfo | Get-Member -MemberType Properties | ForEach-Object { $PidScanResult[$_.Name]=$PrivilegeInfo[$_.Name] }
+			$PidRecord.keys | Get-Member -MemberType Properties | ForEach-Object { $PrivilegeInfo[$_.Name]=$PidRecord[$_.Name] }
 			$PermsForPidResults[$ProcessID]=$PrivilegeInfo
 		}
-		catch { Write-Warning ('Test-ProcessPrivilege: PID dissappeared before we could scan it? PID="{0}" Path="{1}". Error: {2}' -f @($ProcessID,$EXEPath,$Error[0])) }
+		catch { Write-Warning ('Test-ProcessPrivilege: PID dissappeared before we could scan it? PID="{0}" Path="{1}". Error: {2}' -f @($ProcessID,$PidRecord.EXEPath,$Error[0])) }
 	}
 }
 
@@ -204,7 +217,6 @@ function BinaryScanForPID #the actual legwork of combining the binary scan (get-
 	try
     {	if ( ($ProcessID -eq 0) -or (!$EXEPath) ) { return }  #skip if there's no path to exe defined or we're process zero
 		if ( $BinaryScanResultsByPID[$ProcessID] ) { return }    #if we already have a result for this process id, then no need to scan anything
-		$FileResults=@{}
 		$EXEResults=$BinaryScanResultsByPath[$EXEPath];
 		if (!$EXEResults) 
 		{
@@ -232,14 +244,17 @@ function BinaryScanForPID #the actual legwork of combining the binary scan (get-
 				$BinaryScanResultsByPath[$EXEPath]=$EXEResults
 			}
 		}
+		$FileResults=@{}
 		$EXEResults.Keys | ForEach-Object { $FileResults[$_]=$EXEResults[$_] }
 	
-		PermissionScanForPID $ProcessID $EXEPath
+		PermissionScanForPID $EXEResults
 		$PidScanResult=$PermsForPidResults[$ProcessID]
 		if ($PidScanResult) 
 		{
 			$FileResults.PrivilegeLevel = $PidScanResult.PrivilegeLevel
 			$FileResults.Privileges = $PidScanResult.Privileges
+			$FileResults.UserName = $PidScanResult.UserName
+			$FileResults.ParentPID = $PidScanResult.ParentPID
 		}
 
 		$BinaryScanResultsByPID[$ProcessID]=$FileResults  #insert results from scanning this binary into the dataset of scanned binaries
@@ -280,11 +295,14 @@ function Write-Output
 
 	foreach ($aPid in $PIDsLeft.keys) #for any PIDs not already put into the output set, write one line per pid so the user can see scans of all the binaries on the system
 	{
+		$PSRecord=$PIDsLeft[$aPid];
 		$ResultRecord=@{}
 		$BlankHandleResult.keys | ForEach-Object { $ResultRecord[$_]=$BlankHandleResult[$_] }
 		$ResultRecord.PID=$aPid
+		$ResultRecord.UserName=$PSRecord.UserName
+		$ResultRecord.ParentPID=$PSRecord.ParentPID
 		
-		$PSRecord=$PIDsLeft[$aPid];
+		
 		if ($PSRecord.ProcessPath) { $ResultRecord.ProcessPath=$PSRecord.ProcessPath }
 		$ResultRecord.ProcessName=$PSRecord.ProcessName
 		try
@@ -335,8 +353,8 @@ Write-Host ('AHA-Scraper {0} starting in {1}' -f @($AHAScraperVersion,$OurEnvInf
 $HandleEXEPath='.\deps\handle\handle.exe'
 if ( $TempInfo.OSArchitecture.ToString().trim() -like '*64*' ) { Write-host ('64-bit machine detected, will attempt to use handle64.exe for pipe scans.');$HandleEXEPath='.\deps\handle\handle64.exe' }
 
-$BinaryScanError=@{ 'ARCH'='ScanError';'ASLR'='ScanError';'DEP'='ScanError';'Authenticode'='ScanError';'StrongNaming'='ScanError';'SafeSEH'='ScanError';'ControlFlowGuard'='ScanError';'HighentropyVA'='ScanError';'DotNET'='ScanError';'SumSHA512'='ScanError';'SumSHA256'='ScanError';'SumSHA1'='ScanError';'SumMD5'='ScanError';'PrivilegeLevel'='ScanError';'Privileges'='ScanError' }
-$BlankHandleResult=@{ 'ProcessName'='';'PID'='';'Protocol'='';'LocalPort'='';'LocalPortName'='';'LocalAddress'='';'RemotePort'='';'RemotePortName'='';'RemoteAddress'='';'RemoteHostName'='';'State'='';'SentBytes'='';'ReceivedBytes'='';'SentPackets'='';'ReceivedPackets'='';'ProcessPath'='';'ProductName'='';'FileDescription'='';'FileVersion'='';'Company'='';'ProcessCreatedOn'='';'UserName'='';'ProcessServices'='';'ProcessAttributes'='';'AddedOn'='';'CreationTimestamp'='';'ModuleFilename'='';'RemoteIPCountry'='';'AHARuntimeEnvironment'=$OurEnvInfo;'AHAScraperVersion'=$AHAScraperVersion; }
+$BinaryScanError=@{ 'ARCH'='ScanError';'ASLR'='ScanError';'DEP'='ScanError';'Authenticode'='ScanError';'StrongNaming'='ScanError';'SafeSEH'='ScanError';'ControlFlowGuard'='ScanError';'HighentropyVA'='ScanError';'DotNET'='ScanError';'SumSHA512'='ScanError';'SumSHA256'='ScanError';'SumSHA1'='ScanError';'SumMD5'='ScanError';'PrivilegeLevel'='ScanError';'Privileges'='ScanError'; }
+$BlankHandleResult=@{ 'ProcessName'='';'PID'='';'Protocol'='';'LocalPort'='';'LocalPortName'='';'LocalAddress'='';'RemotePort'='';'RemotePortName'='';'RemoteAddress'='';'RemoteHostName'='';'State'='';'SentBytes'='';'ReceivedBytes'='';'SentPackets'='';'ReceivedPackets'='';'ProcessPath'='';'ProductName'='';'FileDescription'='';'FileVersion'='';'Company'='';'ProcessCreatedOn'='';'UserName'='';'ProcessServices'='';'ProcessAttributes'='';'AddedOn'='';'CreationTimestamp'='';'ModuleFilename'='';'RemoteIPCountry'='';'AHARuntimeEnvironment'=$OurEnvInfo;'AHAScraperVersion'=$AHAScraperVersion; 'ParentPID'=''; }
 $PipeCounter=[int]1; #shared counter so we can assign a unique number to each pipe
 [System.Collections.ArrayList]$WorkingData=New-Object System.Collections.ArrayList($null) #create empty array list for our working dataset
 [System.Collections.ArrayList]$PartialPipeResults=New-Object System.Collections.ArrayList($null) #create empty array list for our working dataset
