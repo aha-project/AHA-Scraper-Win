@@ -86,7 +86,8 @@ function GetHandles #calls out to handles to get the handles (synchronously), mi
 	if ( !(Test-Path $HandleEXEPath ) ) 
 	{ 
 		if ($WarnedOnce==$true) { Write-Host ('User has not installed "Handle" from SysInternals suite to {0}, or EULA not accepted (launch once by double clicking), skipping.' -f @($HandleEXEPath)); }
-		$WarnedOnce=$true; 
+		$WarnedOnce=$true;
+		Start-Sleep 1; #need to sleep here to prevent us from busy waiting on handle processing.
 		return 
 	}
 	try { if ( Test-Path $HandleFile ) { Remove-Item $HandleFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
