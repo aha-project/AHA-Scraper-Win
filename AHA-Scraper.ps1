@@ -85,8 +85,8 @@ function GetHandles #calls out to handles to get the handles (synchronously), mi
 	$HandleFile='handles.output'
 	if ( !(Test-Path $HandleEXEPath ) ) 
 	{ 
-		if (!$WarnedOnceHandle) { Write-Host ('User has not installed "Handle" from SysInternals suite to {0}, or EULA not accepted (launch once by double clicking), skipping.' -f @($HandleEXEPath)); }
-		$WarnedOnceHandle=$true;
+		if (!$global:WarnedOnceHandle) { Write-Host ('User has not installed "Handle" from SysInternals suite to {0}, or EULA not accepted (launch once by double clicking), skipping.' -f @($HandleEXEPath)); }
+		$global:WarnedOnceHandle=$true;
 		Start-Sleep 1; #need to sleep here to prevent us from busy waiting on handle processing.
 		return 
 	}
