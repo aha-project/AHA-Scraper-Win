@@ -79,14 +79,14 @@ function IsNumeric ($Value) {
     return $Value -match "^[\d\.]+$"
 }
 
-$WarnedOnce=$false
+
 function GetHandles #calls out to handles to get the handles (synchronously), minimally parses and stores results for future finalization
 {
 	$HandleFile='handles.output'
 	if ( !(Test-Path $HandleEXEPath ) ) 
 	{ 
-		if ($WarnedOnce==$true) { Write-Host ('User has not installed "Handle" from SysInternals suite to {0}, or EULA not accepted (launch once by double clicking), skipping.' -f @($HandleEXEPath)); }
-		$WarnedOnce=$true;
+		if (!$WarnedOnceHandle) { Write-Host ('User has not installed "Handle" from SysInternals suite to {0}, or EULA not accepted (launch once by double clicking), skipping.' -f @($HandleEXEPath)); }
+		$WarnedOnceHandle=$true;
 		Start-Sleep 1; #need to sleep here to prevent us from busy waiting on handle processing.
 		return 
 	}
@@ -375,6 +375,7 @@ $PermsForPidResults=@{}       #caches the results of Test-ProcessPriv per PID
 $ProcessesByPid=@{}           #used by handles and netconnections to keep an example of a pid's full results around for future processing
 $PipeToPidMap=@{}             #reverse mapping from pipe path to PID
 $UniquePipeNumber=@{}         #mapping between a pipe path and a unique number
+$WarnedOnceHandle=$false
 
 try { if ( Test-Path $BinaryAnalysisFile ) { Clear-Content $BinaryAnalysisFile } } #empty out the old output csv file from last run if exists, to ensure fresh result regardless of any bugs later in the script
 catch { Write-Warning ('Unable to clear out "{0}", there may be a permissions issue. Error: {1}' -f @($BinaryAnalysisFile,$Error[0])) }
