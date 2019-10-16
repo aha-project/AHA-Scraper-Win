@@ -1,12 +1,15 @@
 param([uint32]$SecondsToScan=15)                            #script parameters secondstoscan is how many seconds to run the scan for (even on a fast machine with few procs, 15s is about the fastest seen anyway)
 Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1     #import the Get-PESecurity powershell module
 . .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1    #dot source the Get-PESecurity powershell module
-$AHAScraperVersion='v0.8.6'						        #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.7'						        #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 
 function GetNewPids #gets new pids, runs Test-ProcessPriv on any new pids found
 {
 	$NewCounter=0;
-	Get-Process -IncludeUserName | Sort-Object -Property Id | ForEach-Object {
+	$TempResult
+	try { $TempResult=Get-Process -IncludeUserName }
+	catch { $TempResult=Get-Process	}
+	$TempResult | Sort-Object -Property Id | ForEach-Object {
 		if (!$PIDToPath[([string]$_.Id)]) 
 		{
 			$ResultRecord=@{}
@@ -208,9 +211,7 @@ function PermissionScanForPID #runs Test-ProcessPriv on any pids we don't have c
 	{	#Write-Host "TestPriv: Scanning $ProcessID $EXEPath"
 		try
 		{	#This scan will populate 'PrivilegeLevel','Privileges' in the final output file
-			#$PidScanResult=$PIDToPath[$ProcessID].clone()
 			$PrivilegeInfo = Test-ProcessPrivilege -processId $ProcessID -EA SilentlyContinue
-			#$PrivilegeInfo | Get-Member -MemberType Properties | ForEach-Object { $PidScanResult[$_.Name]=$PrivilegeInfo[$_.Name] }
 			$PidRecord.keys | Get-Member -MemberType Properties | ForEach-Object { $PrivilegeInfo[$_.Name]=$PidRecord[$_.Name] }
 			$PermsForPidResults[$ProcessID]=$PrivilegeInfo
 		}
