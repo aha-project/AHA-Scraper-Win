@@ -1,7 +1,7 @@
 param([uint32]$SecondsToScan=15)                            #script parameters secondstoscan is how many seconds to run the scan for (even on a fast machine with few procs, 15s is about the fastest seen anyway)
 Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1     #import the Get-PESecurity powershell module
 . .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1    #dot source the Get-PESecurity powershell module
-$AHAScraperVersion='v0.8.7'						        #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.8b1'						        #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 
 function GetNewPids #gets new pids, runs Test-ProcessPriv on any new pids found
 {
@@ -239,13 +239,41 @@ function BinaryScanForPID #the actual legwork of combining the binary scan (get-
 				$EXEResults.SumSHA512=[System.BitConverter]::ToString($($SHA512Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower(); $FileToHash.Position=0; #compute the sha512 hash, rewind stream
 				$EXEResults.SumSHA256=[System.BitConverter]::ToString($($SHA256Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower(); $FileToHash.Position=0; #compute the sha256 hash, rewind stream
 				$EXEResults.SumSHA1  =[System.BitConverter]::ToString(  $($SHA1Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower(); $FileToHash.Position=0; #compute the sha1   hash, rewind stream
-				$EXEResults.SumMD5   =[System.BitConverter]::ToString(   $($MD5Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower();                         #compute the md5    hash
+				$EXEResults.SumMD5   =[System.BitConverter]::ToString(   $($MD5Alg.ComputeHash($FileToHash))).Replace('-', [String]::Empty).ToLower(); $FileToHash.Position=0; #compute the md5    hash
 				$FileToHash.Dispose();
 				$FileToHash.Close();
 				try 
 				{	#This scan will populate 'ARCH', 'ASLR', 'DEP', 'Authenticode', 'StrongNaming', 'SafeSEH', 'ControlFlowGuard', 'HighEntropyVA', 'DotNET'
-					$Temp=Get-PESecurity -File $EXEPath -EA SilentlyContinue
+					$Temp=Get-PESecurity -File $EXEPath -SkipAuthenticode -EA SilentlyContinue
 					$Temp | Get-Member -MemberType Properties | ForEach-Object { $EXEResults[$_.Name]=$Temp[$_.Name] } #copy over what we got from PESecurity
+					$Authenticode=Get-AuthenticodeSignature -file $EXEPath -EA SilentlyContinue
+					$EXEResults.Authenticode=$false
+					if ($Authenticode.Status -eq 'Valid') { $EXEResults.Authenticode=$true }
+					$EXEResults.SignerCertSubject=$Authenticode.SignerCertificate.Subject
+					$EXEResults.SignerCertIssuer=$Authenticode.SignerCertificate.Issuer
+					$EXEResults.SignerCertSerial=$Authenticode.SignerCertificate.SerialNumber
+					$EXEResults.SignerCertValidDates="ScanError"
+					try {
+						$Begin=$Authenticode.SignerCertificate.NotBefore.ToShortDateString()
+						$End=$Authenticode.SignerCertificate.NotAfter.ToShortDateString()
+						$EXEResults.SignerCertValidDates="$Begin - $END"
+						#Write-Warning -message ('dates "{0}"' -f @($EXEResults.SignerCertValidDates))
+					}
+					catch {}
+					
+					$EXEResults.SignerCertThumbprint=$Authenticode.SignerCertificate.Thumbprint
+					$EXEResults.SignerCertAlgorithm=$Authenticode.SignerCertificate.SignatureAlgorithm
+					write-host $Authenticode.SignerCertificate.DnsNameList
+				
+
+					foreach ($key in @($EXEResults.Keys) ) 
+					{
+						if (!$EXEResults[$key])
+						{ 
+							$EXEResults[$key]='ScanError'; 
+							Write-Warning -message ('fixed up {0}' -f @($key))
+						} 
+					}
 				}
 				catch { Write-Warning -Message ('PESecurity: Unable to scan file. Error: {0}' -f @($Error[0])) }
 				$EXEResults.remove('FileName')  #remove unnecessary result from Get-PESecurity
