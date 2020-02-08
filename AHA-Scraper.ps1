@@ -219,6 +219,13 @@ function PermissionScanForPID #runs Test-ProcessPriv on any pids we don't have c
 	}
 }
 
+function subScanError
+{
+	param($input)
+	if ($input -ne $null -or $input.Length -gt 2) { return $input }
+	return 'ScanError'
+}
+
 function BinaryScanForPID #the actual legwork of combining the binary scan (get-pesecurity, file hashes, etc) and pid scan data (such as test-processpriv) into a final result record
 {
 	param([string]$ProcessID, [string]$EXEPath)
@@ -246,36 +253,57 @@ function BinaryScanForPID #the actual legwork of combining the binary scan (get-
 				{	#This scan will populate 'ARCH', 'ASLR', 'DEP', 'Authenticode', 'StrongNaming', 'SafeSEH', 'ControlFlowGuard', 'HighEntropyVA', 'DotNET'
 					$Temp=Get-PESecurity -File $EXEPath -SkipAuthenticode -EA SilentlyContinue
 					$Temp | Get-Member -MemberType Properties | ForEach-Object { $EXEResults[$_.Name]=$Temp[$_.Name] } #copy over what we got from PESecurity
+				} catch { Write-Warning -Message ('PESecurity: Unable to scan file. Error: {0}' -f @($Error[0])) }
+				
+				try 
+				{
 					$Authenticode=Get-AuthenticodeSignature -file $EXEPath -EA SilentlyContinue
-					$EXEResults.Authenticode=$false
-					if ($Authenticode.Status -eq 'Valid') { $EXEResults.Authenticode=$true }
-					$EXEResults.SignerCertSubject=$Authenticode.SignerCertificate.Subject
-					$EXEResults.SignerCertIssuer=$Authenticode.SignerCertificate.Issuer
-					$EXEResults.SignerCertSerial=$Authenticode.SignerCertificate.SerialNumber
-					$EXEResults.SignerCertValidDates="ScanError"
+					$EXEResults.Authenticode='false'
+					if ($Authenticode.Status -eq 'Valid') { $EXEResults.Authenticode='true' }
+					$EXEResults.SignatureType=subScanError($Authenticode.SignatureType)
+					$EXEResults.SignatureStatusMsg=subScanError($Authenticode.StatusMessage)
+					$EXEResults.SignatureOSBinary='False'
+					if ($Authenticode.IsOSBinary) { $EXEResults.SignatureOSBinary='True' }
+
+					$EXEResults.SignerCertAlgorithm=subScanError($Authenticode.SignerCertificate.SignatureAlgorithm)
+					$EXEResults.SignerCertSubject=subScanError($Authenticode.SignerCertificate.Subject)
+					$EXEResults.SignerCertIssuer=subScanError($Authenticode.SignerCertificate.Issuer)
+					$EXEResults.SignerCertSerial=subScanError($Authenticode.SignerCertificate.SerialNumber)
+					$EXEResults.SignerCertThumbprint=subScanError($Authenticode.SignerCertificate.Thumbprint)
+					$EXEResults.SignerCertAlgorithm=subScanError($Authenticode.SignerCertificate.SignatureAlgorithm.FriendlyName)
+					$EXEResults.SignerCertValidDates='ScanError'
 					try {
 						$Begin=$Authenticode.SignerCertificate.NotBefore.ToShortDateString()
 						$End=$Authenticode.SignerCertificate.NotAfter.ToShortDateString()
 						$EXEResults.SignerCertValidDates="$Begin - $END"
-						#Write-Warning -message ('dates "{0}"' -f @($EXEResults.SignerCertValidDates))
-					}
-					catch {}
-					
-					$EXEResults.SignerCertThumbprint=$Authenticode.SignerCertificate.Thumbprint
-					$EXEResults.SignerCertAlgorithm=$Authenticode.SignerCertificate.SignatureAlgorithm
-					write-host $Authenticode.SignerCertificate.DnsNameList
-				
+					} catch {}
 
+					$EXEResults.TimestamperCertAlgorithm=subScanError($Authenticode.TimeStamperCertificate.SignatureAlgorithm)
+					$EXEResults.TimestamperCertSubject=subScanError($Authenticode.TimeStamperCertificate.Subject)
+					#$EXEResults.TimestamperName=''
+					$EXEResults.TimestamperCertIssuer=subScanError($Authenticode.TimeStamperCertificate.Issuer)
+					$EXEResults.TimestamperCertSerial=subScanError($Authenticode.TimeStamperCertificate.SerialNumber)
+					$EXEResults.TimestamperCertThumbprint=subScanError($Authenticode.TimeStamperCertificate.Thumbprint)
+					$EXEResults.TimestamperCertAlgorithm=subScanError($Authenticode.TimeStamperCertificate.SignatureAlgorithm.FriendlyName)
+					$EXEResults.TimestamperCertValidDates='ScanError'
+					try {
+						$Begin=$Authenticode.TimeStamperCertificate.NotBefore.ToShortDateString()
+						$End=$Authenticode.TimeStamperCertificate.NotAfter.ToShortDateString()
+						$EXEResults.TimestamperCertValidDates="$Begin - $END"
+					} catch {}
+
+				
 					foreach ($key in @($EXEResults.Keys) ) 
 					{
-						if (!$EXEResults[$key])
-						{ 
-							$EXEResults[$key]='ScanError'; 
+						if (!$EXEResults[$key] -or $EXEResults[$key].length -lt 2)
+						{
+							$EXEResults[$key]='ScanError';
 							Write-Warning -message ('fixed up {0}' -f @($key))
 						} 
 					}
 				}
-				catch { Write-Warning -Message ('PESecurity: Unable to scan file. Error: {0}' -f @($Error[0])) }
+				catch { Write-Warning -Message ('Get-Authenticode: Unable to scan file. Error: {0}' -f @($Error[0])) }
+
 				$EXEResults.remove('FileName')  #remove unnecessary result from Get-PESecurity
 				$BinaryScanResultsByPath[$EXEPath]=$EXEResults
 			}
@@ -310,6 +338,8 @@ function UpdateBinaryScanData #scans binaries and merges with pid priv scans (wh
 function Write-Output
 {
 	Write-Host ('Writing results...')
+	[System.Collections.ArrayList]$OutputData=New-Object System.Collections.ArrayList($null)  #create empty array list for final output dataset
+	[System.Collections.ArrayList]$MungedOutputData=New-Object System.Collections.ArrayList($null)  #create empty array list for final output dataset
 	$PIDsLeft=@{}
 	$PIDToPath.keys | ForEach-Object { $PIDSleft[$_]=$PIDToPath[$_] }
 	$UnconnectedLineCounter=0
@@ -325,7 +355,7 @@ function Write-Output
 			$PIDsLeft.Remove([string]$ResultRecord.PID)
 		}
 		catch { Write-Warning -Message ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
-		$OutputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null # TODO:I don't recall entirely why we have to make it a PSObject for export-csv to like it...something to look into in the future I suppose
+		$OutputData.Add($ResultRecord) | Out-Null
 		$ConnectedLineCounter++
 	}
 
@@ -348,7 +378,7 @@ function Write-Output
 			if (!$ScanResult) { $ScanResult=$BinaryScanError }
 			$ScanResult.Keys | ForEach-Object { $ResultRecord[$_]=$ScanResult[$_] }
 			$ResultRecord.Protocol='none'
-			$OutputData.Add((New-Object PSObject -Property $ResultRecord)) | Out-Null # TODO:I don't recall entirely why we have to make it a PSObject for export-csv to like it...something to look into in the future I suppose
+			$OutputData.Add($ResultRecord) | Out-Null
 			$UnconnectedLineCounter++
 		}
 		catch { Write-Warning -Message ('Error at line: {0} Error: {1}' -f @($Error[0].InvocationInfo.ScriptLineNumber, $Error[0])) }
@@ -366,8 +396,24 @@ function Write-Output
 	$SortedColumns+='Privileges'
 	$BinaryScanError.GetEnumerator() | Sort-Object -Property name | ForEach-Object { $SortedColumns+=$($_.key).ToString() } #sort and then add in the binary/exe security scan columns at the end of the sorted set of columns
 
+	foreach ($row in $OutputData)
+	{
+		foreach ($possibleColumn in $SortedColumns)
+		{
+			if ($null -eq $row[$possibleColumn])
+			{
+				$row[$possibleColumn]="";
+			}
+		}
+	}
+
 	#TODO: future: sort output rows by pid?
-	$OutputData | Select-Object $SortedColumns | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8 # write all the results to file
+
+	foreach ($line in $OutputData)
+	{
+		$MungedOutputData.Add((New-Object PSObject -Property $line)) | Out-Null
+	}
+	$MungedOutputData | Select-Object $SortedColumns | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8 # write all the results to file
 	Write-Host ('Wrote {0} lines for connected (net/pipe/etc) PIDs and {1} for unconnected PIDs, {2} lines total.' -f @($ConnectedLineCounter, $UnconnectedLineCounter, $OutputData.Count) )
 }
 
@@ -394,7 +440,7 @@ $BlankHandleResult=@{ 'ProcessName'='';'PID'='';'Protocol'='';'LocalPort'='';'Lo
 $PipeCounter=[int]1; #shared counter so we can assign a unique number to each pipe
 [System.Collections.ArrayList]$WorkingData=New-Object System.Collections.ArrayList($null) #create empty array list for our working dataset
 [System.Collections.ArrayList]$PartialPipeResults=New-Object System.Collections.ArrayList($null) #create empty array list for our working dataset
-[System.Collections.ArrayList]$OutputData=New-Object System.Collections.ArrayList($null)  #create empty array list for final output dataset
+
 
 #lookup tables
 $PIDToPath=@{} 				  #result of getnewpids
