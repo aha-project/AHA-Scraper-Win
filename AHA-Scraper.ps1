@@ -1,7 +1,7 @@
 param([uint32]$SecondsToScan=15)                            #script parameters secondstoscan is how many seconds to run the scan for (even on a fast machine with few procs, 15s is about the fastest seen anyway)
 Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1     #import the Get-PESecurity powershell module
 . .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1    #dot source the Get-PESecurity powershell module
-$AHAScraperVersion='v0.8.8b10'						        #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.8b11'						        #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 
 function GetNewPids #gets new pids, runs Test-ProcessPriv on any new pids found
 {
@@ -78,10 +78,7 @@ function ScanNetconnections #finalize the scan of the net connections
 	Write-Host ('Finalized data for {0} network connections.' -f @($Counter))
 }
 
-function IsNumeric ($Value) {
-    return $Value -match "^[\d\.]+$"
-}
-
+function IsNumeric ($Value) { return $Value -match "^[\d\.]+$" }
 
 function GetHandles #calls out to handles to get the handles (synchronously), minimally parses and stores results for future finalization
 {
