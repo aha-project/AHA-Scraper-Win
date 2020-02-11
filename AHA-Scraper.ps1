@@ -1,7 +1,7 @@
 param([uint32]$SecondsToScan=15)                            #script parameters secondstoscan is how many seconds to run the scan for (even on a fast machine with few procs, 15s is about the fastest seen anyway)
 Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1     #import the Get-PESecurity powershell module
 . .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1    #dot source the Get-PESecurity powershell module
-$AHAScraperVersion='v0.8.8b1'						        #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.8b10'						        #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 
 function GetNewPids #gets new pids, runs Test-ProcessPriv on any new pids found
 {
@@ -386,7 +386,10 @@ function Write-Output
 
 	$TempCols=@{}
 	$SortedColumns=@('ProcessName','PID','ProcessPath','Protocol','LocalAddress','LocalPort','RemoteAddress','RemotePort','RemoteHostName','State') #this is the list of columns (in order) that we want the output file to start with
-	$OutputData[0] | Get-Member -MemberType Properties | Select-Object -exp 'Name' | ForEach-Object { $TempCols[$_]=$_ } #copy column names from line 0 of the output data into a new hash table so we can work on formatting
+	foreach ($row in $OutputData) #without iterating through all the rows to examine columns, we could potentially leave a column out of the column name list.
+	{
+		$row | Get-Member -MemberType Properties | Select-Object -exp 'Name' | ForEach-Object { $TempCols[$_]=$_ } #copy column names from line 0 of the output data into a new hash table so we can work on formatting
+	}
 	$SortedColumns | ForEach-Object { $TempCols.remove($_) } 	   #remove the set of known colums we want the file to start with from the set of all possible columns
 	$BinaryScanError.Keys | ForEach-Object { $TempCols.remove($_) } #remove all the binary/exe security scan columns, from the set of all possible columns, so we can add them in at the end after the sort of the other columns
 	$TempCols.GetEnumerator() | Sort-Object -Property name | ForEach-Object { $SortedColumns+=$($_.key).ToString() } #sort and dump the rest into (what will be the middle of) the array
@@ -396,13 +399,13 @@ function Write-Output
 	$SortedColumns+='Privileges'
 	$BinaryScanError.GetEnumerator() | Sort-Object -Property name | ForEach-Object { $SortedColumns+=$($_.key).ToString() } #sort and then add in the binary/exe security scan columns at the end of the sorted set of columns
 
-	foreach ($row in $OutputData)
+	foreach ($row in $OutputData) #this loop is to clean up any cells that could be null, which creates a less than ideally formed output csv.
 	{
 		foreach ($possibleColumn in $SortedColumns)
 		{
 			if ($null -eq $row[$possibleColumn])
 			{
-				$row[$possibleColumn]="";
+				$row[$possibleColumn]='';
 			}
 		}
 	}
