@@ -1,7 +1,7 @@
 param([uint32]$SecondsToScan=15)                            #script parameters secondstoscan is how many seconds to run the scan for (even on a fast machine with few procs, 15s is about the fastest seen anyway)
 Import-Module .\deps\Get-PESecurity\Get-PESecurity.psm1     #import the Get-PESecurity powershell module
 . .\deps\Test-ProcessPrivilege\Test-ProcessPrivilege.ps1    #dot source the Get-PESecurity powershell module
-$AHAScraperVersion='v0.8.8b20'						        #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
+$AHAScraperVersion='v0.8.8b32'						        #This script tested/requires powershell 2.0+, tested on Server 2008R2, Server 2016.
 
 function GetNewPids #gets new pids, runs Test-ProcessPriv on any new pids found
 {
@@ -216,13 +216,6 @@ function PermissionScanForPID #runs Test-ProcessPriv on any pids we don't have c
 	}
 }
 
-function subScanError
-{
-	param($input)
-	if ($input -ne $null -or $input.Length -gt 2) { return $input }
-	return 'ScanError'
-}
-
 function BinaryScanForPID #the actual legwork of combining the binary scan (get-pesecurity, file hashes, etc) and pid scan data (such as test-processpriv) into a final result record
 {
 	param([string]$ProcessID, [string]$EXEPath)
@@ -257,17 +250,17 @@ function BinaryScanForPID #the actual legwork of combining the binary scan (get-
 					$Authenticode=Get-AuthenticodeSignature -file $EXEPath -EA SilentlyContinue
 					$EXEResults.Authenticode='false'
 					if ($Authenticode.Status -eq 'Valid') { $EXEResults.Authenticode='true' }
-					$EXEResults.SignatureType=subScanError($Authenticode.SignatureType)
-					$EXEResults.SignatureStatusMsg=subScanError($Authenticode.StatusMessage)
-					$EXEResults.SignatureOSBinary='False'
-					if ($Authenticode.IsOSBinary) { $EXEResults.SignatureOSBinary='True' }
+					$EXEResults.SignerType=$Authenticode.SignatureType.ToString()
+					$EXEResults.SignerStatusMsg=$Authenticode.StatusMessage.ToString()
+					$EXEResults.SignerIsOSBinary='False'
+					if ($Authenticode.IsOSBinary) { $EXEResults.SignerIsOSBinary='True' }
 
-					$EXEResults.SignerCertAlgorithm=subScanError($Authenticode.SignerCertificate.SignatureAlgorithm)
-					$EXEResults.SignerCertSubject=subScanError($Authenticode.SignerCertificate.Subject)
-					$EXEResults.SignerCertIssuer=subScanError($Authenticode.SignerCertificate.Issuer)
-					$EXEResults.SignerCertSerial=subScanError($Authenticode.SignerCertificate.SerialNumber)
-					$EXEResults.SignerCertThumbprint=subScanError($Authenticode.SignerCertificate.Thumbprint)
-					$EXEResults.SignerCertAlgorithm=subScanError($Authenticode.SignerCertificate.SignatureAlgorithm.FriendlyName)
+					$EXEResults.SignerCertAlgorithm=$Authenticode.SignerCertificate.SignatureAlgorithm.ToString()
+					$EXEResults.SignerCertSubject=$Authenticode.SignerCertificate.Subject.ToString()
+					$EXEResults.SignerCertIssuer=$Authenticode.SignerCertificate.Issuer.ToString()
+					$EXEResults.SignerCertSerial=$Authenticode.SignerCertificate.SerialNumber.ToString()
+					$EXEResults.SignerCertThumbprint=$Authenticode.SignerCertificate.Thumbprint.ToString()
+					$EXEResults.SignerCertAlgorithm=$Authenticode.SignerCertificate.SignatureAlgorithm.FriendlyName.ToString()
 					$EXEResults.SignerCertValidDates='ScanError'
 					try {
 						$Begin=$Authenticode.SignerCertificate.NotBefore.ToShortDateString()
@@ -275,12 +268,12 @@ function BinaryScanForPID #the actual legwork of combining the binary scan (get-
 						$EXEResults.SignerCertValidDates="$Begin - $END"
 					} catch {}
 
-					$EXEResults.TimestamperCertAlgorithm=subScanError($Authenticode.TimeStamperCertificate.SignatureAlgorithm)
-					$EXEResults.TimestamperCertSubject=subScanError($Authenticode.TimeStamperCertificate.Subject)
-					$EXEResults.TimestamperCertIssuer=subScanError($Authenticode.TimeStamperCertificate.Issuer)
-					$EXEResults.TimestamperCertSerial=subScanError($Authenticode.TimeStamperCertificate.SerialNumber)
-					$EXEResults.TimestamperCertThumbprint=subScanError($Authenticode.TimeStamperCertificate.Thumbprint)
-					$EXEResults.TimestamperCertAlgorithm=subScanError($Authenticode.TimeStamperCertificate.SignatureAlgorithm.FriendlyName)
+					$EXEResults.TimestamperCertAlgorithm=$Authenticode.TimeStamperCertificate.SignatureAlgorithm.ToString()
+					$EXEResults.TimestamperCertSubject=$Authenticode.TimeStamperCertificate.Subject.ToString()
+					$EXEResults.TimestamperCertIssuer=$Authenticode.TimeStamperCertificate.Issuer.ToString()
+					$EXEResults.TimestamperCertSerial=$Authenticode.TimeStamperCertificate.SerialNumber.ToString()
+					$EXEResults.TimestamperCertThumbprint=$Authenticode.TimeStamperCertificate.Thumbprint.ToString()
+					$EXEResults.TimestamperCertAlgorithm=$Authenticode.TimeStamperCertificate.SignatureAlgorithm.FriendlyName.ToString()
 					$EXEResults.TimestamperCertValidDates='ScanError'
 					try {
 						$Begin=$Authenticode.TimeStamperCertificate.NotBefore.ToShortDateString()
