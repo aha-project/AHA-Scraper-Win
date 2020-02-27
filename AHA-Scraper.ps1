@@ -404,6 +404,8 @@ function Write-Output
 
 	foreach ($line in $OutputData)
 	{
+		$line.AHARuntimeEnvironment=$OurEnvInfo;
+		$line.AHAScraperVersion=$AHAScraperVersion;
 		$MungedOutputData.Add((New-Object PSObject -Property $line)) | Out-Null
 	}
 	$MungedOutputData | Select-Object $SortedColumns | Export-csv $BinaryAnalysisFile -NoTypeInformation -Encoding UTF8 # write all the results to file
@@ -429,7 +431,7 @@ $HandleEXEPath='.\deps\handle\handle.exe'
 if ( $TempInfo.OSArchitecture.ToString().trim() -like '*64*' ) { Write-host ('64-bit machine detected, will attempt to use handle64.exe for pipe scans.');$HandleEXEPath='.\deps\handle\handle64.exe' }
 
 $BinaryScanError=@{ 'ARCH'='ScanError';'ASLR'='ScanError';'DEP'='ScanError';'Authenticode'='ScanError';'StrongNaming'='ScanError';'SafeSEH'='ScanError';'ControlFlowGuard'='ScanError';'HighentropyVA'='ScanError';'DotNET'='ScanError';'SumSHA512'='ScanError';'SumSHA256'='ScanError';'SumSHA1'='ScanError';'SumMD5'='ScanError';'PrivilegeLevel'='ScanError';'Privileges'='ScanError'; }
-$BlankHandleResult=@{ 'ProcessName'='';'PID'='';'Protocol'='';'LocalPort'='';'LocalPortName'='';'LocalAddress'='';'RemotePort'='';'RemotePortName'='';'RemoteAddress'='';'RemoteHostName'='';'State'='';'SentBytes'='';'ReceivedBytes'='';'SentPackets'='';'ReceivedPackets'='';'ProcessPath'='';'ProductName'='';'FileDescription'='';'FileVersion'='';'Company'='';'ProcessCreatedOn'='';'UserName'='';'ProcessServices'='';'ProcessAttributes'='';'AddedOn'='';'CreationTimestamp'='';'ModuleFilename'='';'RemoteIPCountry'='';'AHARuntimeEnvironment'=$OurEnvInfo;'AHAScraperVersion'=$AHAScraperVersion; 'ParentPID'=''; }
+$BlankHandleResult=@{ 'ProcessName'='';'PID'='';'Protocol'='';'LocalPort'='';'LocalPortName'='';'LocalAddress'='';'RemotePort'='';'RemotePortName'='';'RemoteAddress'='';'RemoteHostName'='';'State'='';'SentBytes'='';'ReceivedBytes'='';'SentPackets'='';'ReceivedPackets'='';'ProcessPath'='';'ProductName'='';'FileDescription'='';'FileVersion'='';'Company'='';'ProcessCreatedOn'='';'UserName'='';'ProcessServices'='';'ProcessAttributes'='';'AddedOn'='';'CreationTimestamp'='';'ModuleFilename'='';'RemoteIPCountry'=''; 'ParentPID'=''; }
 $PipeCounter=[int]1; #shared counter so we can assign a unique number to each pipe
 [System.Collections.ArrayList]$WorkingData=New-Object System.Collections.ArrayList($null) #create empty array list for our working dataset
 [System.Collections.ArrayList]$PartialPipeResults=New-Object System.Collections.ArrayList($null) #create empty array list for our working dataset
